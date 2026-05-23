@@ -1,0 +1,34 @@
+{
+  "name": "stockshield",
+  "version": "1.0.0",
+  "description": "StockShield - inventory drift guard service",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SumiX21-beep/StockShield.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/SumiX21-beep/StockShield/issues"
+  },
+  "homepage": "https://github.com/SumiX21-beep/StockShield#readme",
+  "dependencies": {
+    "@nestjs/common": "^11.1.23",
+    "@nestjs/core": "^11.1.23",
+    "@nestjs/platform-express": "^11.1.23",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,34 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DriftStatus {
+  DETECTED
+  FIX_QUEUED
+  FIXING
+  RETRYING
+  RESOLVED
+  FAILED_MANUAL
+  IGNORED
+}
+
+model DriftEvent {
+  id               String      @id @default(uuid())
+  tenantId         String
+  sku              String
+  locationId       String
+  omsAvailable     Int
+  channelAvailable Int
+  drift            Int
+  status           DriftStatus @default(DETECTED)
+  reason           String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@index([tenantId, status])
+  @@index([sku, locationId])
+}

@@ -42,3 +42,67 @@ Expected response:
 - Add PostgreSQL + Prisma
 - Create first table: `drift_event`
 - Build `POST /drift-events` and `GET /drift-events`
+
+## Day 2 Setup (Completed)
+
+- Prisma configured for PostgreSQL
+- `DriftEvent` model added in `prisma/schema.prisma`
+- Prisma service integrated into NestJS
+- Validation enabled globally with `ValidationPipe`
+- APIs added:
+  - `POST /drift-events`
+  - `GET /drift-events`
+
+## Day 2 Run Steps
+
+1. Copy env file:
+
+```bash
+cp .env.example .env
+```
+
+PowerShell alternative:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Set your DB URL in `.env`:
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stockshield?schema=public"
+```
+
+3. Generate Prisma client:
+
+```bash
+npm run prisma:generate
+```
+
+4. Create/apply migration (requires PostgreSQL running):
+
+```bash
+npm run prisma:migrate
+```
+
+5. Run API:
+
+```bash
+npm run dev
+```
+
+## Example API Calls
+
+Create drift event:
+
+```bash
+curl -X POST http://localhost:3000/drift-events \
+  -H "Content-Type: application/json" \
+  -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"locationId\":\"loc_ny\",\"omsAvailable\":100,\"channelAvailable\":95}"
+```
+
+List drift events:
+
+```bash
+curl "http://localhost:3000/drift-events?page=1&limit=20&tenantId=store_1"
+```

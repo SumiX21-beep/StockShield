@@ -16,9 +16,38 @@ enum DriftStatus {
   IGNORED
 }
 
+enum ChannelType {
+  SHOPIFY
+}
+
+enum TenantChannelStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum DriftAttemptStatus {
+  STARTED
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum IdempotencyStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+enum RecheckStatus {
+  QUEUED
+  PROCESSED
+  FAILED
+}
+
 model DriftEvent {
   id               String      @id @default(uuid())
   tenantId         String
+  channel          ChannelType @default(SHOPIFY)
   sku              String
   locationId       String
   omsAvailable     Int
@@ -29,6 +58,96 @@ model DriftEvent {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  @@index([tenantId, status])
-  @@index([sku, locationId])
+  attemptLogs DriftAttemptLog[]
+
+  @@index([tenantId, channel, status])
+  @@index([tenantId, channel, sku, locationId])
+}
+
+model TenantChannelConfig {
+  id                   String              @id @default(uuid())
+  tenantId             String
+  channel              ChannelType         @default(SHOPIFY)
+  status               TenantChannelStatus @default(ACTIVE)
+  shopDomain           String
+  encryptedAccessToken String
+  apiVersion           String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@unique([tenantId, channel])
+  @@index([status])
+}
+
+model TenantSkuLocationMap {
+  id                     String      @id @default(uuid())
+  tenantId               String
+  channel                ChannelType @default(SHOPIFY)
+  sku                    String
+  omsLocationId          String
+  shopifyInventoryItemId String
+  shopifyLocationId      String
+  isActive               Boolean     @default(true)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  @@unique([tenantId, channel, sku, omsLocationId])
+  @@index([tenantId, channel, isActive])
+}
+
+model DriftScanCursor {
+  id         String      @id @default(uuid())
+  tenantId   String
+  channel    ChannelType @default(SHOPIFY)
+  lastSeenAt DateTime?
+  lastSeenId String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([tenantId, channel])
+}
+
+model DriftAttemptLog {
+  id              String             @id @default(uuid())
+  driftEventId    String
+  driftEvent      DriftEvent         @relation(fields: [driftEventId], references: [id], onDelete: Cascade)
+  attemptNumber   Int
+  status          DriftAttemptStatus @default(STARTED)
+  targetQuantity  Int?
+  requestPayload  Json?
+  responsePayload Json?
+  errorMessage    String?
+  createdAt       DateTime           @default(now())
+
+  @@index([driftEventId, status])
+}
+
+model IdempotencyRecord {
+  id              String            @id @default(uuid())
+  key             String            @unique
+  tenantId        String
+  channel         ChannelType       @default(SHOPIFY)
+  operation       String
+  status          IdempotencyStatus @default(STARTED)
+  responsePayload Json?
+  lockedUntil     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([tenantId, channel, operation])
+}
+
+model WebhookRecheckEvent {
+  id            String        @id @default(uuid())
+  tenantId      String
+  channel       ChannelType   @default(SHOPIFY)
+  sku           String?
+  locationId    String?
+  sourceEventId String?
+  status        RecheckStatus @default(QUEUED)
+  payload       Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([tenantId, channel, status])
 }

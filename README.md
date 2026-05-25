@@ -106,3 +106,15 @@ List drift events:
 ```bash
 curl "http://localhost:3000/drift-events?page=1&limit=20&tenantId=store_1"
 ```
+
+Get one drift event:
+
+```bash
+curl "http://localhost:3000/drift-events/<event_id>"
+```
+
+Mark a drift event for retry:
+
+```bash
+curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
+```

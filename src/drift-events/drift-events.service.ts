@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { DriftStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDriftEventDto } from "./dto/create-drift-event.dto";
@@ -48,5 +48,29 @@ export class DriftEventsService {
       total,
       items,
     };
+  }
+
+  async findById(id: string) {
+    const driftEvent = await this.prisma.driftEvent.findUnique({
+      where: { id },
+    });
+
+    if (!driftEvent) {
+      throw new NotFoundException(`Drift event ${id} was not found`);
+    }
+
+    return driftEvent;
+  }
+
+  async retry(id: string) {
+    await this.findById(id);
+
+    return this.prisma.driftEvent.update({
+      where: { id },
+      data: {
+        status: DriftStatus.RETRYING,
+        reason: "Manual retry requested",
+      },
+    });
   }
 }

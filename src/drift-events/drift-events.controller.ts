@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
 import { CreateDriftEventDto } from "./dto/create-drift-event.dto";
 import { ListDriftEventsQueryDto } from "./dto/list-drift-events.query";
 import { DriftEventsService } from "./drift-events.service";
@@ -15,5 +15,15 @@ export class DriftEventsController {
   @Get()
   list(@Query() query: ListDriftEventsQueryDto) {
     return this.driftEventsService.list(query);
+  }
+
+  @Get(":id")
+  findById(@Param("id") id: string) {
+    return this.driftEventsService.findById(id);
+  }
+
+  @Post(":id/retry")
+  retry(@Param("id") id: string) {
+    return this.driftEventsService.retry(id);
   }
 }

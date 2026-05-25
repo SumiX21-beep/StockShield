@@ -118,3 +118,20 @@ Mark a drift event for retry:
 ```bash
 curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
 ```
+
+## Data Foundation (Completed)
+
+The Prisma schema now includes the core tables needed for the full DriftGuard plan:
+
+- `TenantChannelConfig` stores per-tenant Shopify connection settings.
+- `TenantSkuLocationMap` maps OMS SKU/location pairs to Shopify inventory/location IDs.
+- `DriftScanCursor` stores scan watermarks so workers know where to resume.
+- `DriftAttemptLog` records fix attempts and failures for audit history.
+- `IdempotencyRecord` prevents duplicate fix operations.
+- `WebhookRecheckEvent` stores webhook-triggered recheck work.
+
+Run migrations after schema changes:
+
+```bash
+npm run prisma:migrate
+```

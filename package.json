@@ -8,7 +8,7 @@
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev --name init_drift_event"
+    "prisma:migrate": "prisma migrate dev"
   },
   "repository": {
     "type": "git",

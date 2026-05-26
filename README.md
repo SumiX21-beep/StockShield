@@ -165,3 +165,11 @@ List SKU/location mappings:
 ```bash
 curl "http://localhost:3000/sku-location-maps?tenantId=store_1&isActive=true"
 ```
+
+Trigger a manual drift scan job:
+
+```bash
+curl -X POST http://localhost:3000/scans/trigger \
+  -H "Content-Type: application/json" \
+  -d "{\"tenantId\":\"store_1\",\"reason\":\"manual test scan\"}"
+```

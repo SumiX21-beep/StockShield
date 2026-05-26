@@ -1,7 +1,8 @@
 import { Injectable } from "@nestjs/common";
-import { QUEUE_NAMES } from "../queues/queue.constants";
+import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { TriggerScanDto } from "./dto/trigger-scan.dto";
+import { ScanJobPayload } from "./scan-job.types";
 
 @Injectable()
 export class ScansService {
@@ -12,6 +13,16 @@ export class ScansService {
     const windowStart = input.windowStart ?? new Date(now.getTime() - 5 * 60 * 1000).toISOString();
     const windowEnd = input.windowEnd ?? now.toISOString();
     const queue = this.queueService.getQueue(QUEUE_NAMES.DRIFT_SCAN);
+    const payload: ScanJobPayload = {
+      tenantId: input.tenantId,
+      channel: "SHOPIFY",
+      trigger: "manual",
+      sku: input.sku,
+      locationId: input.locationId,
+      reason: input.reason,
+      windowStart,
+      windowEnd,
+    };
     const jobId = [
       "manual-scan",
       input.tenantId,
@@ -22,17 +33,8 @@ export class ScansService {
     ].join(":");
 
     const job = await queue.add(
-      "scan-tenant",
-      {
-        tenantId: input.tenantId,
-        channel: "SHOPIFY",
-        trigger: "manual",
-        sku: input.sku,
-        locationId: input.locationId,
-        reason: input.reason,
-        windowStart,
-        windowEnd,
-      },
+      QUEUE_JOB_NAMES.SCAN_TENANT,
+      payload,
       { jobId },
     );
 

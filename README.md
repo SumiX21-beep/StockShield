@@ -135,3 +135,41 @@ Run migrations after schema changes:
 ```bash
 npm run prisma:migrate
 ```
+
+## Setup APIs
+
+Store a tenant Shopify config:
+
+```bash
+curl -X POST http://localhost:3000/tenant-channel-configs \
+  -H "Content-Type: application/json" \
+  -d "{\"tenantId\":\"store_1\",\"shopDomain\":\"demo.myshopify.com\",\"accessToken\":\"shpat_example\",\"apiVersion\":\"2025-10\"}"
+```
+
+List tenant Shopify configs:
+
+```bash
+curl "http://localhost:3000/tenant-channel-configs?tenantId=store_1"
+```
+
+Create or update an OMS-to-Shopify SKU/location mapping:
+
+```bash
+curl -X POST http://localhost:3000/sku-location-maps \
+  -H "Content-Type: application/json" \
+  -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"omsLocationId\":\"loc_ny\",\"shopifyInventoryItemId\":\"123456789\",\"shopifyLocationId\":\"987654321\"}"
+```
+
+List SKU/location mappings:
+
+```bash
+curl "http://localhost:3000/sku-location-maps?tenantId=store_1&isActive=true"
+```
+
+Trigger a manual drift scan job:
+
+```bash
+curl -X POST http://localhost:3000/scans/trigger \
+  -H "Content-Type: application/json" \
+  -d "{\"tenantId\":\"store_1\",\"reason\":\"manual test scan\"}"
+```

@@ -4,8 +4,14 @@
   "description": "StockShield - inventory drift guard service",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "npm run dev:api",
+    "dev:api": "tsx watch src/main.ts",
+    "dev:worker": "tsx watch src/main-worker.ts",
+    "dev:scheduler": "tsx watch src/main-scheduler.ts",
+    "start": "npm run start:api",
+    "start:api": "tsx src/main.ts",
+    "start:worker": "tsx src/main-worker.ts",
+    "start:scheduler": "tsx src/main-scheduler.ts",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"

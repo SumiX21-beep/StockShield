@@ -173,3 +173,30 @@ curl -X POST http://localhost:3000/scans/trigger \
   -H "Content-Type: application/json" \
   -d "{\"tenantId\":\"store_1\",\"reason\":\"manual test scan\"}"
 ```
+
+## Worker Flow
+
+Run the API, worker, and scheduler in separate terminals:
+
+```bash
+npm run dev:api
+npm run dev:worker
+npm run dev:scheduler
+```
+
+The scheduler enqueues one `drift.scan` job per active Shopify tenant every `DRIFT_SCAN_INTERVAL_MINUTES`.
+The worker consumes scan jobs, reads changed OMS inventory rows, compares Shopify inventory, then enqueues `drift.fix` jobs for mismatches.
+
+The fix worker:
+
+- Uses Redis locks per `tenant + sku + location`.
+- Uses `IdempotencyRecord` to prevent duplicate corrections.
+- Writes `DriftAttemptLog` rows for every fix attempt.
+- Applies absolute Shopify inventory updates with the configured Shopify token.
+- Marks successful events `RESOLVED` and terminal failures `FAILED_MANUAL`.
+
+Manual retry now queues a fresh fix job:
+
+```bash
+curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
+```

@@ -67,6 +67,12 @@ export class DriftFixWorkerService implements OnModuleInit, OnModuleDestroy {
     return this.fixProcessor.process(job.data, {
       attemptsMade: job.attemptsMade,
       maxAttempts: Number(job.opts.attempts ?? 1),
+    }).then(async (result) => {
+      if (result.status === "failed-manual") {
+        await this.enqueueDlq(job, result.message ?? "FAILED_MANUAL", result);
+      }
+
+      return result;
     });
   }
 
@@ -74,14 +80,21 @@ export class DriftFixWorkerService implements OnModuleInit, OnModuleDestroy {
     return job.attemptsMade >= Number(job.opts.attempts ?? 1);
   }
 
-  private async enqueueDlq(job: Job<FixJobPayload, FixJobResult>, error: Error) {
+  private async enqueueDlq(job: Job<FixJobPayload, FixJobResult>, error: Error | string, result?: FixJobResult) {
+    const message = error instanceof Error ? error.message : error;
     const queue = this.queueService.getQueue(QUEUE_NAMES.DRIFT_DLQ);
     await queue.add(QUEUE_JOB_NAMES.DLQ_FIX, {
       sourceQueue: QUEUE_NAMES.DRIFT_FIX,
       sourceJobId: job.id,
+      sourceJobName: job.name,
       payload: job.data,
-      error: error.message,
+      result: result ?? null,
+      error: message,
+      attemptsMade: job.attemptsMade,
+      maxAttempts: Number(job.opts.attempts ?? 1),
       failedAt: new Date().toISOString(),
+    }, {
+      jobId: `dlq:${QUEUE_NAMES.DRIFT_FIX}:${String(job.id)}`,
     });
   }
 }

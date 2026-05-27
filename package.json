@@ -12,11 +12,21 @@
     "start:api": "tsx src/main.ts",
     "start:worker": "tsx src/main-worker.ts",
     "start:scheduler": "tsx src/main-scheduler.ts",
+    "start:prod:api": "node dist/main.js",
+    "start:prod:worker": "node dist/main-worker.js",
+    "start:prod:scheduler": "node dist/main-scheduler.js",
+    "build": "tsc -p tsconfig.json",
     "test": "node --import tsx --test \"src/**/*.spec.ts\"",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && npm run prisma:validate",
     "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "validate:env": "node scripts/validate-env.mjs",
+    "smoke": "node scripts/smoke-test.mjs",
+    "load:check": "node scripts/load-check.mjs",
+    "demo:api": "node scripts/demo-flow.mjs"
   },
   "repository": {
     "type": "git",

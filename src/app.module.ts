@@ -3,6 +3,7 @@ import { AppController } from "./app.controller";
 import { AuthModule } from "./auth/auth.module";
 import { TokenCryptoModule } from "./crypto/token-crypto.module";
 import { DriftEventsModule } from "./drift-events/drift-events.module";
+import { ObservabilityModule } from "./observability/observability.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { QueuesModule } from "./queues/queues.module";
 import { ScansModule } from "./scans/scans.module";
@@ -21,6 +22,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     SkuLocationMapsModule,
     ScansModule,
     WebhooksModule,
+    ObservabilityModule,
   ],
   controllers: [AppController],
   providers: [],

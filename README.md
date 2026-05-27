@@ -103,6 +103,33 @@ For non-interactive environments, apply checked-in migrations with:
 npm run prisma:deploy
 ```
 
+## Week 5 Operations
+
+Production build and verification:
+
+```bash
+npm run verify
+npm run build
+```
+
+Deployment and validation helpers:
+
+```bash
+npm run validate:env -- all
+npm run smoke
+npm run load:check
+npm run demo:api
+```
+
+Deployment assets:
+
+- Docker image: `Dockerfile`
+- Local stack: `deploy/docker-compose.yml`
+- Kubernetes starter manifest: `deploy/k8s/stockshield.yaml`
+- Deployment guide: `docs/DEPLOYMENT.md`
+- Runbook: `docs/RUNBOOK.md`
+- Load validation guide: `docs/LOAD-VALIDATION.md`
+
 5. Run API:
 
 ```bash
@@ -258,6 +285,7 @@ The fix worker:
 - Writes `DriftAttemptLog` rows for every fix attempt.
 - Applies absolute Shopify inventory updates with the configured Shopify token.
 - Marks successful events `RESOLVED` and terminal failures `FAILED_MANUAL`.
+- Sends `FAILED_MANUAL` fix results and terminal thrown failures to the `drift.dlq` queue.
 
 Manual retry now queues a fresh fix job:
 
@@ -279,6 +307,24 @@ Get drift summary counters:
 
 ```bash
 curl "http://localhost:3000/v1/admin/summary?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
+```
+
+Get operational metrics:
+
+```bash
+curl "http://localhost:3000/v1/admin/metrics?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
+```
+
+The metrics response includes drift status counts, fix attempt success rate,
+webhook recheck status counts, and BullMQ queue counts/lag for `drift.scan`,
+`drift.fix`, `drift.recheck`, and `drift.dlq`.
+
+Inspect DLQ records:
+
+```bash
+curl "http://localhost:3000/v1/admin/dlq?tenantId=store_1&limit=20" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 

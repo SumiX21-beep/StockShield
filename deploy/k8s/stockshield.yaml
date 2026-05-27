@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stockshield
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stockshield-config
+  namespace: stockshield
+data:
+  PORT: "3000"
+  SHOPIFY_API_VERSION: "2025-10"
+  OMS_INVENTORY_TABLE: "inventory_snapshot"
+  OMS_TENANT_COLUMN: "tenant_id"
+  OMS_ROW_ID_COLUMN: "id"
+  OMS_SKU_COLUMN: "sku"
+  OMS_LOCATION_COLUMN: "location_id"
+  OMS_STOCKED_COLUMN: "stocked_quantity"
+  OMS_RESERVED_COLUMN: "reserved_quantity"
+  OMS_UPDATED_AT_COLUMN: "updated_at"
+  DRIFT_SCAN_INTERVAL_MINUTES: "5"
+  DRIFT_SCAN_LIMIT: "1000"
+  DRIFT_THRESHOLD: "0"
+  DRIFT_SCAN_CONCURRENCY: "2"
+  DRIFT_FIX_CONCURRENCY: "8"
+  DRIFT_RECHECK_CONCURRENCY: "5"
+  DRIFT_FIX_LOCK_TTL_MS: "60000"
+  STOCKSHIELD_AUTH_DISABLED: "false"
+  STOCKSHIELD_TENANT_SCOPE_REQUIRED: "false"
+  STOCKSHIELD_TENANT_SCOPE_DISABLED: "false"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: stockshield-secrets
+  namespace: stockshield
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://USER:PASSWORD@postgres:5432/stockshield?schema=public"
+  REDIS_URL: "redis://redis:6379"
+  OMS_DATABASE_URL: "postgresql://readonly:PASSWORD@oms-postgres:5432/oms"
+  STOCKSHIELD_ENCRYPTION_KEY: "replace-with-strong-secret"
+  STOCKSHIELD_INTERNAL_API_TOKEN: "replace-with-service-token"
+  STOCKSHIELD_ALLOWED_TENANT_IDS: ""
+  SHOPIFY_WEBHOOK_SECRET: "replace-with-shopify-client-secret"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stockshield-migrate
+  namespace: stockshield
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/sumix21-beep/stockshield:0.0.2
+          command: ["npm", "run", "prisma:deploy"]
+          envFrom:
+            - configMapRef:
+                name: stockshield-config
+            - secretRef:
+                name: stockshield-secrets
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stockshield-api
+  namespace: stockshield
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stockshield-api
+  template:
+    metadata:
+      labels:
+        app: stockshield-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/sumix21-beep/stockshield:0.0.2
+          command: ["npm", "run", "start:prod:api"]
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: stockshield-config
+            - secretRef:
+                name: stockshield-secrets
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stockshield-api
+  namespace: stockshield
+spec:
+  selector:
+    app: stockshield-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stockshield-worker
+  namespace: stockshield
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stockshield-worker
+  template:
+    metadata:
+      labels:
+        app: stockshield-worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/sumix21-beep/stockshield:0.0.2
+          command: ["npm", "run", "start:prod:worker"]
+          envFrom:
+            - configMapRef:
+                name: stockshield-config
+            - secretRef:
+                name: stockshield-secrets
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stockshield-scheduler
+  namespace: stockshield
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stockshield-scheduler
+  template:
+    metadata:
+      labels:
+        app: stockshield-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: ghcr.io/sumix21-beep/stockshield:0.0.2
+          command: ["npm", "run", "start:prod:scheduler"]
+          envFrom:
+            - configMapRef:
+                name: stockshield-config
+            - secretRef:
+                name: stockshield-secrets

@@ -13,6 +13,12 @@ export type OmsChangedInventoryQuery = {
   limit: number;
 };
 
+export type OmsCurrentInventoryQuery = {
+  tenantId: string;
+  sku: string;
+  locationId: string;
+};
+
 export type OmsChangedInventoryRow = {
   rowId: string;
   sku: string;

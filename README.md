@@ -93,30 +93,46 @@ npm run dev
 
 ## Example API Calls
 
+Admin endpoints require an internal token:
+
+```bash
+export STOCKSHIELD_ADMIN_AUTH="Authorization: Bearer change-this-local-admin-token"
+```
+
+PowerShell:
+
+```powershell
+$env:STOCKSHIELD_ADMIN_AUTH = "Authorization: Bearer change-this-local-admin-token"
+```
+
 Create drift event:
 
 ```bash
 curl -X POST http://localhost:3000/drift-events \
   -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"locationId\":\"loc_ny\",\"omsAvailable\":100,\"channelAvailable\":95}"
 ```
 
 List drift events:
 
 ```bash
-curl "http://localhost:3000/drift-events?page=1&limit=20&tenantId=store_1"
+curl "http://localhost:3000/drift-events?page=1&limit=20&tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Get one drift event:
 
 ```bash
-curl "http://localhost:3000/drift-events/<event_id>"
+curl "http://localhost:3000/drift-events/<event_id>" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Mark a drift event for retry:
 
 ```bash
-curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
+curl -X POST "http://localhost:3000/drift-events/<event_id>/retry" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 ## Data Foundation (Completed)
@@ -143,13 +159,15 @@ Store a tenant Shopify config:
 ```bash
 curl -X POST http://localhost:3000/tenant-channel-configs \
   -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"shopDomain\":\"demo.myshopify.com\",\"accessToken\":\"shpat_example\",\"apiVersion\":\"2025-10\"}"
 ```
 
 List tenant Shopify configs:
 
 ```bash
-curl "http://localhost:3000/tenant-channel-configs?tenantId=store_1"
+curl "http://localhost:3000/tenant-channel-configs?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Create or update an OMS-to-Shopify SKU/location mapping:
@@ -157,13 +175,15 @@ Create or update an OMS-to-Shopify SKU/location mapping:
 ```bash
 curl -X POST http://localhost:3000/sku-location-maps \
   -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"omsLocationId\":\"loc_ny\",\"shopifyInventoryItemId\":\"123456789\",\"shopifyLocationId\":\"987654321\"}"
 ```
 
 List SKU/location mappings:
 
 ```bash
-curl "http://localhost:3000/sku-location-maps?tenantId=store_1&isActive=true"
+curl "http://localhost:3000/sku-location-maps?tenantId=store_1&isActive=true" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Trigger a manual drift scan job:
@@ -171,6 +191,7 @@ Trigger a manual drift scan job:
 ```bash
 curl -X POST http://localhost:3000/scans/trigger \
   -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"reason\":\"manual test scan\"}"
 ```
 
@@ -200,3 +221,31 @@ Manual retry now queues a fresh fix job:
 ```bash
 curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
 ```
+
+Ignore a drift event:
+
+```bash
+curl -X POST "http://localhost:3000/drift-events/<event_id>/ignore" \
+  -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -d "{\"reason\":\"known warehouse adjustment\",\"actor\":\"ops@example.com\"}"
+```
+
+Get drift summary counters:
+
+```bash
+curl "http://localhost:3000/drift-events/summary?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
+```
+
+## Shopify Webhook Rechecks
+
+Configure `SHOPIFY_WEBHOOK_SECRET` with the Shopify app client secret. The API verifies `X-Shopify-Hmac-SHA256` against the raw request body before it trusts webhook data.
+
+Inventory webhooks should target:
+
+```bash
+POST /webhooks/shopify/inventory-levels-update
+```
+
+When a valid webhook arrives, StockShield maps Shopify `inventory_item_id + location_id` back to an OMS SKU/location and enqueues a `drift.recheck` job. The worker then compares the current OMS quantity with Shopify and queues a fix if drift exists.

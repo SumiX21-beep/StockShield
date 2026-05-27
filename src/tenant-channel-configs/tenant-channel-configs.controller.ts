@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { InternalAuthGuard } from "../auth/internal-auth.guard";
 import { CreateTenantChannelConfigDto } from "./dto/create-tenant-channel-config.dto";
 import { ListTenantChannelConfigsQueryDto } from "./dto/list-tenant-channel-configs.query";
 import { UpdateTenantChannelConfigDto } from "./dto/update-tenant-channel-config.dto";
 import { TenantChannelConfigsService } from "./tenant-channel-configs.service";
 
 @Controller("tenant-channel-configs")
+@UseGuards(InternalAuthGuard)
 export class TenantChannelConfigsController {
   constructor(private readonly configsService: TenantChannelConfigsService) {}
 

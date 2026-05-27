@@ -4,16 +4,16 @@ import { TokenCryptoService } from "../crypto/token-crypto.service";
 
 type ShopifyInventoryLevelsResponse = {
   inventory_levels?: Array<{
-    inventory_item_id?: number;
-    location_id?: number;
+    inventory_item_id?: number | string;
+    location_id?: number | string;
     available?: number;
   }>;
 };
 
 type ShopifyInventorySetResponse = {
   inventory_level?: {
-    inventory_item_id?: number;
-    location_id?: number;
+    inventory_item_id?: number | string;
+    location_id?: number | string;
     available?: number;
   };
 };
@@ -24,7 +24,7 @@ export class ShopifyInventoryService {
 
   async getAvailableQuantity(config: TenantChannelConfig, mapping: TenantSkuLocationMap): Promise<number> {
     const apiVersion = config.apiVersion ?? (process.env.SHOPIFY_API_VERSION ?? "2025-10");
-    const url = new URL(`https://${config.shopDomain}/admin/api/${apiVersion}/inventory_levels.json`);
+    const url = new URL(`${this.shopBaseUrl(config.shopDomain)}/admin/api/${apiVersion}/inventory_levels.json`);
     url.searchParams.set("inventory_item_ids", mapping.shopifyInventoryItemId);
     url.searchParams.set("location_ids", mapping.shopifyLocationId);
 
@@ -55,15 +55,15 @@ export class ShopifyInventoryService {
     available: number,
   ): Promise<ShopifyInventorySetResponse> {
     const apiVersion = config.apiVersion ?? (process.env.SHOPIFY_API_VERSION ?? "2025-10");
-    const response = await fetch(`https://${config.shopDomain}/admin/api/${apiVersion}/inventory_levels/set.json`, {
+    const response = await fetch(`${this.shopBaseUrl(config.shopDomain)}/admin/api/${apiVersion}/inventory_levels/set.json`, {
       method: "POST",
       headers: {
         "X-Shopify-Access-Token": this.resolveAccessToken(config.encryptedAccessToken),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        inventory_item_id: Number(mapping.shopifyInventoryItemId),
-        location_id: Number(mapping.shopifyLocationId),
+        inventory_item_id: this.shopifyRestId(mapping.shopifyInventoryItemId),
+        location_id: this.shopifyRestId(mapping.shopifyLocationId),
         available,
       }),
     });
@@ -86,5 +86,25 @@ export class ShopifyInventoryService {
     }
 
     return this.tokenCrypto.decrypt(token);
+  }
+
+  private shopBaseUrl(shopDomain: string) {
+    const trimmed = shopDomain.trim().replace(/\/+$/, "");
+    if (trimmed.startsWith("https://")) {
+      return trimmed;
+    }
+    if (trimmed.startsWith("http://")) {
+      return `https://${trimmed.slice("http://".length)}`;
+    }
+    return `https://${trimmed}`;
+  }
+
+  private shopifyRestId(value: string) {
+    if (!/^\d+$/.test(value)) {
+      throw new Error(`Invalid Shopify REST ID "${value}"`);
+    }
+
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : value;
   }
 }

@@ -19,3 +19,12 @@ export type ScanJobResult = {
   failedManual: number;
   cursorAdvanced: boolean;
 };
+
+export type RecheckScanResult = {
+  tenantId: string;
+  sku: string;
+  locationId: string;
+  detectedDrifts: number;
+  resolvedDuringScan: number;
+  failedManual: number;
+};

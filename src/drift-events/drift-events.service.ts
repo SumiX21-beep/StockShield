@@ -6,7 +6,16 @@ import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { CreateDriftEventDto } from "./dto/create-drift-event.dto";
+import { IgnoreDriftEventDto } from "./dto/ignore-drift-event.dto";
 import { ListDriftEventsQueryDto } from "./dto/list-drift-events.query";
+import { SummaryDriftEventsQueryDto } from "./dto/summary-drift-events.query";
+
+const OPEN_DRIFT_STATUSES = [
+  DriftStatus.DETECTED,
+  DriftStatus.FIX_QUEUED,
+  DriftStatus.FIXING,
+  DriftStatus.RETRYING,
+];
 
 @Injectable()
 export class DriftEventsService {
@@ -34,7 +43,9 @@ export class DriftEventsService {
     const where: Prisma.DriftEventWhereInput = {
       tenantId: query.tenantId,
       sku: query.sku,
+      locationId: query.locationId,
       status: query.status,
+      createdAt: this.createdAtFilter(query.from, query.to),
     };
     const skip = (query.page - 1) * query.limit;
     const take = query.limit;
@@ -54,6 +65,61 @@ export class DriftEventsService {
       limit: query.limit,
       total,
       items,
+    };
+  }
+
+  async summary(query: SummaryDriftEventsQueryDto) {
+    const where: Prisma.DriftEventWhereInput = {
+      tenantId: query.tenantId,
+    };
+    const [byStatus, resolvedEvents] = await this.prisma.$transaction([
+      this.prisma.driftEvent.groupBy({
+        by: ["status"],
+        where,
+        _count: { status: true },
+      }),
+      this.prisma.driftEvent.findMany({
+        where: {
+          ...where,
+          status: DriftStatus.RESOLVED,
+        },
+        select: {
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
+
+    const counts = Object.fromEntries(
+      Object.values(DriftStatus).map((status) => [status, 0]),
+    ) as Record<DriftStatus, number>;
+
+    for (const row of byStatus) {
+      counts[row.status] = row._count.status;
+    }
+
+    const open = OPEN_DRIFT_STATUSES.reduce((total, status) => total + counts[status], 0);
+    const closed = counts[DriftStatus.RESOLVED] + counts[DriftStatus.FAILED_MANUAL];
+    const successRate = closed === 0 ? null : counts[DriftStatus.RESOLVED] / closed;
+    const avgResolveTimeMs = resolvedEvents.length
+      ? Math.round(
+          resolvedEvents.reduce(
+            (total, event) => total + event.updatedAt.getTime() - event.createdAt.getTime(),
+            0,
+          ) / resolvedEvents.length,
+        )
+      : null;
+
+    return {
+      tenantId: query.tenantId ?? null,
+      open,
+      failedManual: counts[DriftStatus.FAILED_MANUAL],
+      resolved: counts[DriftStatus.RESOLVED],
+      ignored: counts[DriftStatus.IGNORED],
+      total: Object.values(counts).reduce((total, count) => total + count, 0),
+      successRate,
+      avgResolveTimeMs,
+      byStatus: counts,
     };
   }
 
@@ -120,5 +186,37 @@ export class DriftEventsService {
       jobId: job.id,
       driftEvent: updated,
     };
+  }
+
+  async ignore(id: string, input: IgnoreDriftEventDto) {
+    const driftEvent = await this.findById(id);
+
+    if (driftEvent.status === DriftStatus.RESOLVED) {
+      throw new BadRequestException(`Drift event ${id} is already RESOLVED`);
+    }
+
+    return this.prisma.driftEvent.update({
+      where: { id },
+      data: {
+        status: DriftStatus.IGNORED,
+        reason: input.actor ? `${input.reason} (ignored by ${input.actor})` : input.reason,
+      },
+    });
+  }
+
+  private createdAtFilter(from?: string, to?: string): Prisma.DateTimeFilter | undefined {
+    if (!from && !to) {
+      return undefined;
+    }
+
+    const filter: Prisma.DateTimeFilter = {};
+    if (from) {
+      filter.gte = new Date(from);
+    }
+    if (to) {
+      filter.lte = new Date(to);
+    }
+
+    return filter;
   }
 }

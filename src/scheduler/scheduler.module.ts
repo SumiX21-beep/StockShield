@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AuthModule } from "../auth/auth.module";
 import { OmsModule } from "../oms/oms.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { QueuesModule } from "../queues/queues.module";
@@ -7,7 +8,7 @@ import { ScansModule } from "../scans/scans.module";
 import { ScanSchedulerService } from "./scan-scheduler.service";
 
 @Module({
-  imports: [PrismaModule, QueuesModule, OmsModule, ShopifyModule, ScansModule],
+  imports: [PrismaModule, AuthModule, QueuesModule, OmsModule, ShopifyModule, ScansModule],
   providers: [ScanSchedulerService],
 })
 export class SchedulerModule {}

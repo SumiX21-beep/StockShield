@@ -50,20 +50,20 @@ export class SkuLocationMapsService {
     });
   }
 
-  async findById(id: string) {
+  async findById(id: string, tenantId?: string) {
     const mapping = await this.prisma.tenantSkuLocationMap.findUnique({
       where: { id },
     });
 
-    if (!mapping) {
+    if (!mapping || (tenantId && mapping.tenantId !== tenantId)) {
       throw new NotFoundException(`SKU location map ${id} was not found`);
     }
 
     return mapping;
   }
 
-  async update(id: string, input: UpdateSkuLocationMapDto) {
-    await this.findById(id);
+  async update(id: string, input: UpdateSkuLocationMapDto, tenantId?: string) {
+    await this.findById(id, tenantId);
 
     return this.prisma.tenantSkuLocationMap.update({
       where: { id },

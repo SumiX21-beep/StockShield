@@ -80,6 +80,22 @@ describe("TenantScopeGuard", () => {
       );
     });
   });
+
+  test("injects JWT tenant scope into requests without an explicit tenant query", () => {
+    withTenantEnv({}, () => {
+      const request: TestRequest = {
+        headers: {},
+        query: {},
+        body: {},
+        auth: { type: "jwt", tenantId: "store_1" },
+      };
+      const guard = new TenantScopeGuard();
+
+      assert.equal(guard.canActivate(contextFor(request)), true);
+      assert.equal((request.query as { tenantId?: string }).tenantId, "store_1");
+      assert.deepEqual(request.tenantScope, { tenantId: "store_1" });
+    });
+  });
 });
 
 function contextFor(request: TestRequest) {

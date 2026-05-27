@@ -6,7 +6,9 @@ BEGIN
 END
 $$;
 
-CREATE TABLE IF NOT EXISTS public.inventory_snapshot (
+CREATE SCHEMA IF NOT EXISTS oms;
+
+CREATE TABLE IF NOT EXISTS oms.inventory_snapshot (
   id text PRIMARY KEY,
   tenant_id text NOT NULL,
   sku text NOT NULL,
@@ -16,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_snapshot (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-INSERT INTO public.inventory_snapshot (
+INSERT INTO oms.inventory_snapshot (
   id,
   tenant_id,
   sku,
@@ -35,5 +37,5 @@ INSERT INTO public.inventory_snapshot (
 ) ON CONFLICT (id) DO NOTHING;
 
 GRANT CONNECT ON DATABASE stockshield TO readonly;
-GRANT USAGE ON SCHEMA public TO readonly;
-GRANT SELECT ON public.inventory_snapshot TO readonly;
+GRANT USAGE ON SCHEMA oms TO readonly;
+GRANT SELECT ON oms.inventory_snapshot TO readonly;

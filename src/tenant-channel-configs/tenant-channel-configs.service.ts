@@ -52,13 +52,13 @@ export class TenantChannelConfigsService {
     return configs.map((config) => this.toSafeConfig(config));
   }
 
-  async findById(id: string) {
-    const config = await this.findEntityById(id);
+  async findById(id: string, tenantId?: string) {
+    const config = await this.findEntityById(id, tenantId);
     return this.toSafeConfig(config);
   }
 
-  async update(id: string, input: UpdateTenantChannelConfigDto) {
-    await this.findEntityById(id);
+  async update(id: string, input: UpdateTenantChannelConfigDto, tenantId?: string) {
+    await this.findEntityById(id, tenantId);
 
     const data: Prisma.TenantChannelConfigUpdateInput = {};
 
@@ -75,12 +75,12 @@ export class TenantChannelConfigsService {
     return this.toSafeConfig(config);
   }
 
-  private async findEntityById(id: string) {
+  private async findEntityById(id: string, tenantId?: string) {
     const config = await this.prisma.tenantChannelConfig.findUnique({
       where: { id },
     });
 
-    if (!config) {
+    if (!config || (tenantId && config.tenantId !== tenantId)) {
       throw new NotFoundException(`Tenant channel config ${id} was not found`);
     }
 

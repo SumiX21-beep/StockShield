@@ -35,12 +35,16 @@ if (role === "all") {
 
 if (process.env.STOCKSHIELD_AUTH_DISABLED !== "true") {
   requireEnv("STOCKSHIELD_INTERNAL_API_TOKEN");
+  requireEnv("STOCKSHIELD_JWT_SECRET");
 }
 
 validateUrl("DATABASE_URL", ["postgres:", "postgresql:"]);
 validateUrl("REDIS_URL", ["redis:", "rediss:"]);
 if (process.env.OMS_DATABASE_URL) {
   validateUrl("OMS_DATABASE_URL", ["postgres:", "postgresql:"]);
+}
+if (process.env.SLACK_WEBHOOK_URL) {
+  validateUrl("SLACK_WEBHOOK_URL", ["https:"]);
 }
 
 warnIfDefault("STOCKSHIELD_ENCRYPTION_KEY", [
@@ -51,6 +55,10 @@ warnIfDefault("STOCKSHIELD_ENCRYPTION_KEY", [
 warnIfDefault("STOCKSHIELD_INTERNAL_API_TOKEN", [
   "change-this-local-admin-token",
   "compose-local-admin-token",
+]);
+warnIfDefault("STOCKSHIELD_JWT_SECRET", [
+  "change-this-local-dashboard-jwt-secret",
+  "compose-local-dashboard-jwt-secret",
 ]);
 warnIfDefault("SHOPIFY_WEBHOOK_SECRET", [
   "replace-with-shopify-client-secret",

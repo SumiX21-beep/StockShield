@@ -44,6 +44,45 @@ enum RecheckStatus {
   FAILED
 }
 
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum AlertChannel {
+  SLACK
+}
+
+enum AlertDeliveryStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTUP
+  SCALE
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
 model DriftEvent {
   id               String      @id @default(uuid())
   tenantId         String
@@ -59,11 +98,58 @@ model DriftEvent {
   updatedAt        DateTime    @updatedAt
 
   attemptLogs DriftAttemptLog[]
+  alertLogs   AlertDeliveryLog[]
 
   @@index([tenantId, channel, status])
   @@index([tenantId, channel, sku, locationId])
   // The baseline migration also creates a Postgres partial unique index for
   // open drift states on tenant/channel/sku/location.
+}
+
+model Tenant {
+  id        String       @id
+  name      String
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model TenantBillingSubscription {
+  id                 String             @id @default(uuid())
+  tenantId           String             @unique
+  plan               SubscriptionPlan   @default(FREE)
+  status             SubscriptionStatus @default(TRIALING)
+  monthlyEventLimit  Int                @default(100)
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([plan, status])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         UserRole @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships TenantMembership[]
+}
+
+model TenantMembership {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId  String
+  role      UserRole @default(ADMIN)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
 }
 
 model TenantChannelConfig {
@@ -122,6 +208,36 @@ model DriftAttemptLog {
   createdAt       DateTime           @default(now())
 
   @@index([driftEventId, status])
+}
+
+model AlertDeliveryLog {
+  id           String              @id @default(uuid())
+  tenantId     String
+  driftEventId String?
+  driftEvent   DriftEvent?         @relation(fields: [driftEventId], references: [id], onDelete: SetNull)
+  channel      AlertChannel        @default(SLACK)
+  status       AlertDeliveryStatus
+  message      String
+  errorMessage String?
+  createdAt    DateTime            @default(now())
+
+  @@index([tenantId, status, createdAt])
+  @@index([driftEventId])
+}
+
+model SkuRiskSnapshot {
+  id            String    @id @default(uuid())
+  tenantId      String
+  sku           String
+  locationId    String
+  driftCount24h Int       @default(0)
+  lastDriftAt   DateTime?
+  riskLevel     RiskLevel @default(LOW)
+  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+
+  @@unique([tenantId, sku, locationId])
+  @@index([tenantId, riskLevel, updatedAt])
 }
 
 model IdempotencyRecord {

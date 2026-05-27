@@ -1,4 +1,4 @@
-import { DriftStatus } from "@prisma/client";
+import { DriftStatus, RiskLevel } from "@prisma/client";
 import { Transform } from "class-transformer";
 import { IsEnum, IsInt, IsISO8601, IsOptional, IsString, Max, Min } from "class-validator";
 
@@ -16,8 +16,16 @@ export class ListDriftEventsQueryDto {
   locationId?: string;
 
   @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
   @IsEnum(DriftStatus)
   status?: DriftStatus;
+
+  @IsOptional()
+  @IsEnum(RiskLevel)
+  riskLevel?: RiskLevel;
 
   @IsOptional()
   @IsISO8601()

@@ -3,14 +3,17 @@ FROM node:22-alpine AS app
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY prisma ./prisma
+COPY prisma.config.ts ./
+RUN npm run prisma:generate
+
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
 
-RUN npm run prisma:generate && npm run build
+RUN npm run build
 
 ENV NODE_ENV=production
 ENV PORT=3000

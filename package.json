@@ -19,6 +19,7 @@
     "test": "node --import tsx --test \"src/**/*.spec.ts\"",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm test && npm run prisma:validate",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
@@ -26,7 +27,8 @@
     "validate:env": "node scripts/validate-env.mjs",
     "smoke": "node scripts/smoke-test.mjs",
     "load:check": "node scripts/load-check.mjs",
-    "demo:api": "node scripts/demo-flow.mjs"
+    "demo:api": "node scripts/demo-flow.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "repository": {
     "type": "git",

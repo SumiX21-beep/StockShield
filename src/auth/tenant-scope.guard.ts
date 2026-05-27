@@ -5,16 +5,7 @@ import {
   ForbiddenException,
   Injectable,
 } from "@nestjs/common";
-
-type HeaderMap = Record<string, string | string[] | undefined>;
-type TenantScopedRequest = {
-  headers: HeaderMap;
-  body?: unknown;
-  query?: unknown;
-  tenantScope?: {
-    tenantId?: string;
-  };
-};
+import { AuthenticatedRequest } from "./auth.types";
 
 @Injectable()
 export class TenantScopeGuard implements CanActivate {
@@ -23,7 +14,7 @@ export class TenantScopeGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<TenantScopedRequest>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const tenantIds = this.extractTenantIds(request);
     const uniqueTenantIds = [...new Set(tenantIds)];
 
@@ -47,16 +38,32 @@ export class TenantScopeGuard implements CanActivate {
     request.tenantScope = {
       tenantId: uniqueTenantIds[0],
     };
+    this.applyJwtTenantScope(request, uniqueTenantIds[0]);
 
     return true;
   }
 
-  private extractTenantIds(request: TenantScopedRequest) {
+  private extractTenantIds(request: AuthenticatedRequest) {
     return [
+      ...this.valuesFrom(request.auth?.tenantId),
       ...this.valuesFrom(request.headers["x-stockshield-tenant-id"]),
       ...this.valuesFrom(this.tenantIdFromObject(request.query)),
       ...this.valuesFrom(this.tenantIdFromObject(request.body)),
     ];
+  }
+
+  private applyJwtTenantScope(request: AuthenticatedRequest, tenantId?: string) {
+    if (!tenantId || request.auth?.type !== "jwt") {
+      return;
+    }
+
+    if (request.query && typeof request.query === "object" && !("tenantId" in request.query)) {
+      request.query.tenantId = tenantId;
+    }
+
+    if (request.body && typeof request.body === "object" && !Array.isArray(request.body) && !("tenantId" in request.body)) {
+      (request.body as { tenantId?: string }).tenantId = tenantId;
+    }
   }
 
   private tenantIdFromObject(value: unknown) {

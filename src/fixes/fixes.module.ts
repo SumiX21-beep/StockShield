@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { AlertsModule } from "../alerts/alerts.module";
+import { LiveEventsModule } from "../live-events/live-events.module";
 import { LocksModule } from "../locks/locks.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { QueuesModule } from "../queues/queues.module";
@@ -7,7 +9,7 @@ import { DriftFixProcessorService } from "./drift-fix-processor.service";
 import { DriftFixWorkerService } from "./drift-fix-worker.service";
 
 @Module({
-  imports: [PrismaModule, QueuesModule, LocksModule, ShopifyModule],
+  imports: [AlertsModule, LiveEventsModule, PrismaModule, QueuesModule, LocksModule, ShopifyModule],
   providers: [DriftFixProcessorService, DriftFixWorkerService],
   exports: [DriftFixProcessorService, DriftFixWorkerService],
 })

@@ -21,6 +21,9 @@ export class AppController {
       internalApiToken:
         process.env.STOCKSHIELD_AUTH_DISABLED === "true" ||
         Boolean(process.env.STOCKSHIELD_INTERNAL_API_TOKEN),
+      jwtSecret:
+        process.env.STOCKSHIELD_AUTH_DISABLED === "true" ||
+        Boolean(process.env.STOCKSHIELD_JWT_SECRET),
     };
 
     return {

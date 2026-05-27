@@ -80,6 +80,9 @@ describe("ScanProcessorService", () => {
       omsReader as never,
       shopifyInventory as never,
       queueService as never,
+      sideEffects().alerts as never,
+      sideEffects().live as never,
+      sideEffects().risk as never,
     );
 
     const result = await service.process({
@@ -191,6 +194,9 @@ describe("ScanProcessorService", () => {
       omsReader as never,
       {} as never,
       queueService as never,
+      sideEffects().alerts as never,
+      sideEffects().live as never,
+      sideEffects().risk as never,
     );
 
     const result = await service.process({
@@ -244,5 +250,20 @@ function skuLocationMap() {
     isActive: true,
     createdAt: new Date("2026-05-27T00:00:00Z"),
     updatedAt: new Date("2026-05-27T00:00:00Z"),
+  };
+}
+
+function sideEffects() {
+  return {
+    alerts: {
+      notifyDriftDetected: async () => undefined,
+      notifyFixFailed: async () => undefined,
+    },
+    live: {
+      publish: () => undefined,
+    },
+    risk: {
+      refreshForEvent: async () => undefined,
+    },
   };
 }

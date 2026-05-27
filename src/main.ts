@@ -9,6 +9,10 @@ async function bootstrap() {
     rawBody: true,
   });
   const port = Number(process.env.PORT ?? 3000);
+  app.enableCors({
+    origin: process.env.STOCKSHIELD_DASHBOARD_ORIGIN?.split(",").map((origin) => origin.trim()).filter(Boolean) ?? true,
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

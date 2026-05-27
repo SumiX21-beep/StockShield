@@ -8,6 +8,8 @@ import {
   Prisma,
   TenantChannelStatus,
 } from "@prisma/client";
+import { AlertsService } from "../alerts/alerts.service";
+import { LiveEventsService } from "../live-events/live-events.service";
 import { RedisLockService } from "../locks/redis-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ShopifyInventoryService } from "../shopify/shopify-inventory.service";
@@ -27,6 +29,8 @@ export class DriftFixProcessorService {
     private readonly prisma: PrismaService,
     private readonly shopifyInventory: ShopifyInventoryService,
     private readonly redisLock: RedisLockService,
+    private readonly alertsService: AlertsService,
+    private readonly liveEventsService: LiveEventsService,
   ) {}
 
   async process(payload: FixJobPayload, context: FixContext): Promise<FixJobResult> {
@@ -268,6 +272,15 @@ export class DriftFixProcessorService {
         },
       }),
     ]);
+    this.publishDriftUpdate(payload, DriftStatus.FAILED_MANUAL);
+    await this.alertsService.notifyFixFailed({
+      tenantId: payload.tenantId,
+      driftEventId: payload.driftEventId,
+      sku: payload.sku,
+      locationId: payload.locationId,
+      targetQty: payload.targetQty,
+      reason,
+    });
 
     return {
       driftEventId: payload.driftEventId,
@@ -308,6 +321,7 @@ export class DriftFixProcessorService {
         },
       }),
     ]);
+    this.publishDriftUpdate(payload, DriftStatus.RESOLVED);
   }
 
   private async markIdempotencyCompleted(key: string, responsePayload: Prisma.InputJsonValue) {
@@ -372,6 +386,18 @@ export class DriftFixProcessorService {
     }
 
     await this.prisma.$transaction(operations);
+    this.publishDriftUpdate(payload, status);
+
+    if (terminal) {
+      await this.alertsService.notifyFixFailed({
+        tenantId: payload.tenantId,
+        driftEventId: payload.driftEventId,
+        sku: payload.sku,
+        locationId: payload.locationId,
+        targetQty: payload.targetQty,
+        reason: message.slice(0, 300),
+      });
+    }
   }
 
   private errorMessage(error: unknown) {
@@ -379,5 +405,17 @@ export class DriftFixProcessorService {
       return error.message;
     }
     return String(error);
+  }
+
+  private publishDriftUpdate(payload: FixJobPayload, status: DriftStatus) {
+    this.liveEventsService.publish({
+      type: "drift.updated",
+      tenantId: payload.tenantId,
+      id: payload.driftEventId,
+      driftEventId: payload.driftEventId,
+      sku: payload.sku,
+      locationId: payload.locationId,
+      status,
+    });
   }
 }

@@ -49,16 +49,20 @@ The Compose stack starts Postgres, Redis, a migration job, API, worker, and sche
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
+For local Docker, the API is exposed on `http://localhost:3001` and Redis is
+exposed on host port `6380` to avoid common local port conflicts. Inside Docker,
+services still talk to `api:3000` and `redis:6379`.
+
 Then verify:
 
 ```bash
-$env:STOCKSHIELD_BASE_URL = "http://localhost:3000"
+$env:STOCKSHIELD_BASE_URL = "http://localhost:3001"
 $env:STOCKSHIELD_INTERNAL_API_TOKEN = "compose-local-admin-token"
 npm run smoke
 ```
 
-The Compose Postgres init script creates a sample `inventory_snapshot` table and a
-read-only `readonly` user for OMS reads.
+The Compose Postgres init script creates a sample `oms.inventory_snapshot` table
+and a read-only `readonly` user for OMS reads.
 
 ## Kubernetes
 
@@ -81,11 +85,26 @@ Before production use:
 - Redis for BullMQ queues and drift locks.
 - Read-only OMS PostgreSQL connection.
 - Shopify Admin API credentials per tenant.
+- `STOCKSHIELD_JWT_SECRET` for dashboard JWT sessions.
+- Optional `SLACK_WEBHOOK_URL` for ops alerts.
+
+## Dashboard Deployment
+
+Deploy `s:\Zentory\StockShield-Dashboard` as a static Vite app on Render,
+Railway, or any static host. Set `VITE_STOCKSHIELD_API_URL` to the public API URL
+and set `STOCKSHIELD_DASHBOARD_ORIGIN` on the API to the dashboard origin.
+
+Seed interview/demo data after migrations:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec api npm run seed:demo
+```
 
 ## Release Checklist
 
 - `npm run verify` passes.
 - `npm run build` passes.
+- Dashboard `npm run build` passes.
 - Image builds successfully.
 - `npm run validate:env -- all` passes in the target environment.
 - Migrations have run successfully.

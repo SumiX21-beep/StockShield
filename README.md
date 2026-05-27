@@ -119,6 +119,7 @@ npm run validate:env -- all
 npm run smoke
 npm run load:check
 npm run demo:api
+npm run seed:demo
 ```
 
 Deployment assets:
@@ -166,6 +167,24 @@ query string or request body. Set `STOCKSHIELD_ALLOWED_TENANT_IDS` to a
 comma-separated allow-list to restrict which tenants the service token can touch.
 Set `STOCKSHIELD_TENANT_SCOPE_REQUIRED=true` when every admin request must carry
 an explicit tenant scope.
+
+Dashboard users authenticate with JWT:
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"demo@stockshield.local\",\"password\":\"StockShield@123\"}"
+```
+
+With Docker Compose running, seed demo data inside the API container so it uses
+the Docker PostgreSQL service directly:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec api npm run seed:demo
+```
+
+This creates the demo user, tenant, drift events, attempt logs, Slack alert
+history, and high-risk SKU snapshots used by the React dashboard.
 
 Create drift event:
 
@@ -339,3 +358,40 @@ POST /v1/webhooks/shopify/inventory-levels-update
 ```
 
 When a valid webhook arrives, StockShield maps Shopify `inventory_item_id + location_id` back to an OMS SKU/location and enqueues a `drift.recheck` job. The worker then compares the current OMS quantity with Shopify and queues a fix if drift exists.
+
+## Interview Product Layer
+
+StockShield now includes dashboard-facing SaaS features:
+
+- Self-serve workspace signup at `POST /v1/auth/signup`.
+- JWT login and tenant-scoped admin access.
+- Account overview and simulated SaaS plan management at `GET /v1/admin/account`.
+- Slack alert delivery logs for detected drift, terminal fix failure, and high-risk SKUs.
+- Server-sent live updates at `GET /v1/admin/live/drift-events`.
+- Rule-based SKU risk scoring using drift frequency in the last 24 hours.
+- Browser setup forms for Shopify connection, SKU mapping, manual scan, and manual drift tests.
+- Alert and risk APIs:
+  - `GET /v1/admin/alerts`
+  - `GET /v1/admin/risk-skus`
+
+The separate React dashboard lives at:
+
+```bash
+s:\Zentory\StockShield-Dashboard
+```
+
+Run it locally:
+
+```bash
+cd s:\Zentory\StockShield-Dashboard
+npm install
+$env:VITE_STOCKSHIELD_API_URL="http://localhost:3001"
+npm run dev
+```
+
+Default demo login after `npm run seed:demo`:
+
+```text
+demo@stockshield.local
+StockShield@123
+```

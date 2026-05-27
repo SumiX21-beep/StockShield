@@ -11,7 +11,7 @@ metadata:
 data:
   PORT: "3000"
   SHOPIFY_API_VERSION: "2025-10"
-  OMS_INVENTORY_TABLE: "inventory_snapshot"
+  OMS_INVENTORY_TABLE: "oms.inventory_snapshot"
   OMS_TENANT_COLUMN: "tenant_id"
   OMS_ROW_ID_COLUMN: "id"
   OMS_SKU_COLUMN: "sku"
@@ -26,6 +26,9 @@ data:
   DRIFT_FIX_CONCURRENCY: "8"
   DRIFT_RECHECK_CONCURRENCY: "5"
   DRIFT_FIX_LOCK_TTL_MS: "60000"
+  DRIFT_RISK_HIGH_THRESHOLD: "3"
+  STOCKSHIELD_DASHBOARD_ORIGIN: "http://localhost:5173"
+  STOCKSHIELD_JWT_EXPIRES_SECONDS: "43200"
   STOCKSHIELD_AUTH_DISABLED: "false"
   STOCKSHIELD_TENANT_SCOPE_REQUIRED: "false"
   STOCKSHIELD_TENANT_SCOPE_DISABLED: "false"
@@ -42,7 +45,9 @@ stringData:
   OMS_DATABASE_URL: "postgresql://readonly:PASSWORD@oms-postgres:5432/oms"
   STOCKSHIELD_ENCRYPTION_KEY: "replace-with-strong-secret"
   STOCKSHIELD_INTERNAL_API_TOKEN: "replace-with-service-token"
+  STOCKSHIELD_JWT_SECRET: "replace-with-dashboard-jwt-secret"
   STOCKSHIELD_ALLOWED_TENANT_IDS: ""
+  SLACK_WEBHOOK_URL: ""
   SHOPIFY_WEBHOOK_SECRET: "replace-with-shopify-client-secret"
 ---
 apiVersion: batch/v1

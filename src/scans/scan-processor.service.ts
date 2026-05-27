@@ -1,12 +1,15 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ChannelType, DriftEvent, DriftStatus, Prisma, TenantChannelConfig, TenantChannelStatus } from "@prisma/client";
+import { AlertsService } from "../alerts/alerts.service";
 import { buildFixIdempotencyKey } from "../fixes/fix-job.helpers";
 import { FixJobPayload } from "../fixes/fix-job.types";
+import { LiveEventsService } from "../live-events/live-events.service";
 import { OmsReaderService } from "../oms/oms-reader.service";
 import { OmsChangedInventoryRow } from "../oms/oms-reader.types";
 import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
+import { RiskService } from "../risk/risk.service";
 import { ShopifyInventoryService } from "../shopify/shopify-inventory.service";
 import { calculateOmsAvailable, compareInventory, driftThresholdFromEnv } from "./inventory-comparison";
 import { nextCursorFromRows, scanCursorForWindow } from "./scan-cursor";
@@ -29,6 +32,9 @@ export class ScanProcessorService {
     private readonly omsReader: OmsReaderService,
     private readonly shopifyInventory: ShopifyInventoryService,
     private readonly queueService: QueueService,
+    private readonly alertsService: AlertsService,
+    private readonly liveEventsService: LiveEventsService,
+    private readonly riskService: RiskService,
   ) {}
 
   async process(payload: ScanJobPayload): Promise<ScanJobResult> {
@@ -324,11 +330,13 @@ export class ScanProcessorService {
     const open = await this.findReusableDrift(input);
 
     if (open) {
-      return this.updateDrift(open.id, input);
+      const updated = await this.updateDrift(open.id, input);
+      await this.afterDriftMutation("drift.updated", updated, open.status);
+      return updated;
     }
 
     try {
-      return await this.prisma.driftEvent.create({
+      const created = await this.prisma.driftEvent.create({
         data: {
           tenantId: input.tenantId,
           channel: ChannelType.SHOPIFY,
@@ -341,6 +349,8 @@ export class ScanProcessorService {
           reason: input.reason,
         },
       });
+      await this.afterDriftMutation("drift.created", created);
+      return created;
     } catch (error) {
       if (!this.isUniqueConstraintError(error)) {
         throw error;
@@ -351,7 +361,9 @@ export class ScanProcessorService {
         throw error;
       }
 
-      return this.updateDrift(existing.id, input);
+      const updated = await this.updateDrift(existing.id, input);
+      await this.afterDriftMutation("drift.updated", updated, existing.status);
+      return updated;
     }
   }
 
@@ -420,5 +432,36 @@ export class ScanProcessorService {
     await queue.add(QUEUE_JOB_NAMES.FIX_DRIFT, payload, {
       jobId: idempotencyKey,
     });
+  }
+
+  private async afterDriftMutation(
+    type: "drift.created" | "drift.updated",
+    driftEvent: DriftEvent,
+    previousStatus?: DriftStatus,
+  ) {
+    this.liveEventsService.publish({
+      type,
+      tenantId: driftEvent.tenantId,
+      id: driftEvent.id,
+      driftEventId: driftEvent.id,
+      sku: driftEvent.sku,
+      locationId: driftEvent.locationId,
+      status: driftEvent.status,
+    });
+    await this.riskService.refreshForEvent(driftEvent);
+
+    if (type === "drift.created" && (driftEvent.status === DriftStatus.FIX_QUEUED || driftEvent.status === DriftStatus.DETECTED)) {
+      await this.alertsService.notifyDriftDetected(driftEvent);
+    }
+
+    if (driftEvent.status === DriftStatus.FAILED_MANUAL && previousStatus !== DriftStatus.FAILED_MANUAL) {
+      await this.alertsService.notifyFixFailed({
+        tenantId: driftEvent.tenantId,
+        driftEventId: driftEvent.id,
+        sku: driftEvent.sku,
+        locationId: driftEvent.locationId,
+        reason: driftEvent.reason ?? "FAILED_MANUAL",
+      });
+    }
   }
 }

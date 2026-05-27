@@ -1,10 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { DriftStatus, Prisma } from "@prisma/client";
+import { AlertDeliveryStatus, DriftEvent, DriftStatus, Prisma } from "@prisma/client";
+import { AlertsService } from "../alerts/alerts.service";
+import { AuthenticatedRequest } from "../auth/auth.types";
 import { buildFixIdempotencyKey } from "../fixes/fix-job.helpers";
 import { FixJobPayload } from "../fixes/fix-job.types";
+import { LiveEventsService } from "../live-events/live-events.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
+import { RiskService } from "../risk/risk.service";
 import { CreateDriftEventDto } from "./dto/create-drift-event.dto";
 import { IgnoreDriftEventDto } from "./dto/ignore-drift-event.dto";
 import { ListDriftEventsQueryDto } from "./dto/list-drift-events.query";
@@ -22,10 +26,13 @@ export class DriftEventsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly queueService: QueueService,
+    private readonly alertsService: AlertsService,
+    private readonly liveEventsService: LiveEventsService,
+    private readonly riskService: RiskService,
   ) {}
 
-  create(input: CreateDriftEventDto) {
-    return this.prisma.driftEvent.create({
+  async create(input: CreateDriftEventDto) {
+    const driftEvent = await this.prisma.driftEvent.create({
       data: {
         tenantId: input.tenantId,
         sku: input.sku,
@@ -37,6 +44,9 @@ export class DriftEventsService {
         reason: input.reason,
       },
     });
+
+    await this.afterDriftCreated(driftEvent);
+    return driftEvent;
   }
 
   async list(query: ListDriftEventsQueryDto) {
@@ -46,7 +56,9 @@ export class DriftEventsService {
       locationId: query.locationId,
       status: query.status,
       createdAt: this.createdAtFilter(query.from, query.to),
+      OR: this.searchFilter(query.search),
     };
+    await this.applyRiskFilter(where, query);
     const skip = (query.page - 1) * query.limit;
     const take = query.limit;
 
@@ -59,12 +71,16 @@ export class DriftEventsService {
       }),
       this.prisma.driftEvent.count({ where }),
     ]);
+    const riskByKey = await this.riskByEventKey(items);
 
     return {
       page: query.page,
       limit: query.limit,
       total,
-      items,
+      items: items.map((item) => ({
+        ...item,
+        risk: riskByKey.get(this.riskKey(item)) ?? null,
+      })),
     };
   }
 
@@ -72,7 +88,7 @@ export class DriftEventsService {
     const where: Prisma.DriftEventWhereInput = {
       tenantId: query.tenantId,
     };
-    const [byStatus, resolvedEvents] = await this.prisma.$transaction([
+    const [byStatus, resolvedEvents, riskCounts, recentAlerts] = await Promise.all([
       this.prisma.driftEvent.groupBy({
         by: ["status"],
         where,
@@ -87,6 +103,17 @@ export class DriftEventsService {
           createdAt: true,
           updatedAt: true,
         },
+      }),
+      this.riskService.counts(query.tenantId),
+      this.prisma.alertDeliveryLog.groupBy({
+        by: ["status"],
+        where: {
+          tenantId: query.tenantId,
+          createdAt: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+          },
+        },
+        _count: { status: true },
       }),
     ]);
 
@@ -120,28 +147,51 @@ export class DriftEventsService {
       successRate,
       avgResolveTimeMs,
       byStatus: counts,
+      risk: riskCounts,
+      alerts24h: {
+        sent: this.alertCount(recentAlerts, AlertDeliveryStatus.SENT),
+        failed: this.alertCount(recentAlerts, AlertDeliveryStatus.FAILED),
+        skipped: this.alertCount(recentAlerts, AlertDeliveryStatus.SKIPPED),
+      },
     };
   }
 
-  async findById(id: string) {
+  async findById(id: string, tenantId?: string) {
     const driftEvent = await this.prisma.driftEvent.findUnique({
       where: { id },
       include: {
         attemptLogs: {
           orderBy: { attemptNumber: "asc" },
         },
+        alertLogs: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        },
       },
     });
 
-    if (!driftEvent) {
+    if (!driftEvent || (tenantId && driftEvent.tenantId !== tenantId)) {
       throw new NotFoundException(`Drift event ${id} was not found`);
     }
 
-    return driftEvent;
+    const risk = await this.prisma.skuRiskSnapshot.findUnique({
+      where: {
+        tenantId_sku_locationId: {
+          tenantId: driftEvent.tenantId,
+          sku: driftEvent.sku,
+          locationId: driftEvent.locationId,
+        },
+      },
+    });
+
+    return {
+      ...driftEvent,
+      risk,
+    };
   }
 
-  async retry(id: string) {
-    const driftEvent = await this.findById(id);
+  async retry(id: string, tenantId?: string) {
+    const driftEvent = await this.findById(id, tenantId);
 
     if (driftEvent.status === DriftStatus.RESOLVED || driftEvent.status === DriftStatus.IGNORED) {
       throw new BadRequestException(`Drift event ${id} is already ${driftEvent.status}`);
@@ -179,6 +229,7 @@ export class DriftEventsService {
         reason: "Manual retry requested",
       },
     });
+    this.publishDrift("drift.updated", updated);
 
     return {
       queued: true,
@@ -188,20 +239,23 @@ export class DriftEventsService {
     };
   }
 
-  async ignore(id: string, input: IgnoreDriftEventDto) {
-    const driftEvent = await this.findById(id);
+  async ignore(id: string, input: IgnoreDriftEventDto, request?: AuthenticatedRequest) {
+    const driftEvent = await this.findById(id, request?.tenantScope?.tenantId);
 
     if (driftEvent.status === DriftStatus.RESOLVED) {
       throw new BadRequestException(`Drift event ${id} is already RESOLVED`);
     }
 
-    return this.prisma.driftEvent.update({
+    const actor = input.actor ?? request?.auth?.email;
+    const updated = await this.prisma.driftEvent.update({
       where: { id },
       data: {
         status: DriftStatus.IGNORED,
-        reason: input.actor ? `${input.reason} (ignored by ${input.actor})` : input.reason,
+        reason: actor ? `${input.reason} (ignored by ${actor})` : input.reason,
       },
     });
+    this.publishDrift("drift.updated", updated);
+    return updated;
   }
 
   private createdAtFilter(from?: string, to?: string): Prisma.DateTimeFilter | undefined {
@@ -218,5 +272,107 @@ export class DriftEventsService {
     }
 
     return filter;
+  }
+
+  private async afterDriftCreated(driftEvent: DriftEvent) {
+    this.publishDrift("drift.created", driftEvent);
+    await this.riskService.refreshForEvent(driftEvent);
+
+    if (driftEvent.status === DriftStatus.FIX_QUEUED || driftEvent.status === DriftStatus.DETECTED) {
+      await this.alertsService.notifyDriftDetected(driftEvent);
+    } else if (driftEvent.status === DriftStatus.FAILED_MANUAL) {
+      await this.alertsService.notifyFixFailed({
+        tenantId: driftEvent.tenantId,
+        driftEventId: driftEvent.id,
+        sku: driftEvent.sku,
+        locationId: driftEvent.locationId,
+        reason: driftEvent.reason ?? "FAILED_MANUAL",
+      });
+    }
+  }
+
+  private publishDrift(type: "drift.created" | "drift.updated", driftEvent: DriftEvent) {
+    this.liveEventsService.publish({
+      type,
+      tenantId: driftEvent.tenantId,
+      id: driftEvent.id,
+      driftEventId: driftEvent.id,
+      sku: driftEvent.sku,
+      locationId: driftEvent.locationId,
+      status: driftEvent.status,
+    });
+  }
+
+  private searchFilter(search?: string): Prisma.DriftEventWhereInput[] | undefined {
+    if (!search?.trim()) {
+      return undefined;
+    }
+
+    const contains = search.trim();
+    return [
+      { sku: { contains, mode: "insensitive" } },
+      { locationId: { contains, mode: "insensitive" } },
+      { reason: { contains, mode: "insensitive" } },
+    ];
+  }
+
+  private async applyRiskFilter(where: Prisma.DriftEventWhereInput, query: ListDriftEventsQueryDto) {
+    if (!query.riskLevel) {
+      return;
+    }
+
+    const snapshots = await this.prisma.skuRiskSnapshot.findMany({
+      where: {
+        tenantId: query.tenantId,
+        riskLevel: query.riskLevel,
+      },
+      select: {
+        tenantId: true,
+        sku: true,
+        locationId: true,
+      },
+    });
+
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : []),
+      snapshots.length
+        ? {
+            OR: snapshots.map((snapshot) => ({
+              tenantId: snapshot.tenantId,
+              sku: snapshot.sku,
+              locationId: snapshot.locationId,
+            })),
+          }
+        : { id: "__no_risk_matches__" },
+    ];
+  }
+
+  private async riskByEventKey(events: DriftEvent[]) {
+    if (events.length === 0) {
+      return new Map<string, Awaited<ReturnType<typeof this.prisma.skuRiskSnapshot.findFirst>>>();
+    }
+
+    const snapshots = await this.prisma.skuRiskSnapshot.findMany({
+      where: {
+        OR: events.map((event) => ({
+          tenantId: event.tenantId,
+          sku: event.sku,
+          locationId: event.locationId,
+        })),
+      },
+    });
+
+    return new Map(snapshots.map((snapshot) => [this.riskKey(snapshot), snapshot]));
+  }
+
+  private riskKey(input: { tenantId: string; sku: string; locationId: string }) {
+    return `${input.tenantId}:${input.sku}:${input.locationId}`;
+  }
+
+  private alertCount(
+    rows: { status: AlertDeliveryStatus; _count: { status: number } }[],
+    status: AlertDeliveryStatus,
+  ) {
+    return rows.find((row) => row.status === status)?._count.status ?? 0;
   }
 }

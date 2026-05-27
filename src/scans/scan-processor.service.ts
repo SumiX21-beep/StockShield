@@ -8,7 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { ShopifyInventoryService } from "../shopify/shopify-inventory.service";
-import { ScanJobPayload, ScanJobResult } from "./scan-job.types";
+import { RecheckScanResult, ScanJobPayload, ScanJobResult } from "./scan-job.types";
 
 const OPEN_DRIFT_STATUSES = [
   DriftStatus.DETECTED,
@@ -128,6 +128,74 @@ export class ScanProcessorService {
       resolvedDuringScan,
       failedManual,
       cursorAdvanced: payload.trigger === "scheduled" && rows.length > 0,
+    };
+  }
+
+  async processTargetedRecheck(input: {
+    tenantId: string;
+    sku: string;
+    locationId: string;
+    sourceEventId?: string;
+  }): Promise<RecheckScanResult> {
+    const tenantConfig = await this.prisma.tenantChannelConfig.findUnique({
+      where: {
+        tenantId_channel: {
+          tenantId: input.tenantId,
+          channel: ChannelType.SHOPIFY,
+        },
+      },
+    });
+
+    if (!tenantConfig || tenantConfig.status !== TenantChannelStatus.ACTIVE) {
+      return {
+        tenantId: input.tenantId,
+        sku: input.sku,
+        locationId: input.locationId,
+        detectedDrifts: 0,
+        resolvedDuringScan: 0,
+        failedManual: 0,
+      };
+    }
+
+    const row = await this.omsReader.readCurrentInventory({
+      tenantId: input.tenantId,
+      sku: input.sku,
+      locationId: input.locationId,
+    });
+
+    if (!row) {
+      await this.createOrUpdateDrift({
+        tenantId: input.tenantId,
+        sku: input.sku,
+        locationId: input.locationId,
+        omsAvailable: 0,
+        channelAvailable: 0,
+        status: DriftStatus.FAILED_MANUAL,
+        reason: "OMS_ROW_MISSING",
+      });
+
+      return {
+        tenantId: input.tenantId,
+        sku: input.sku,
+        locationId: input.locationId,
+        detectedDrifts: 0,
+        resolvedDuringScan: 0,
+        failedManual: 1,
+      };
+    }
+
+    const result = await this.processRow(
+      input.tenantId,
+      tenantConfig,
+      row,
+      `recheck:${input.sourceEventId ?? new Date().toISOString()}`,
+    );
+
+    return {
+      tenantId: input.tenantId,
+      sku: input.sku,
+      locationId: input.locationId,
+      ...result,
     };
   }
 

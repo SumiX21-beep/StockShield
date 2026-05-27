@@ -8,5 +8,6 @@ export const QUEUE_NAMES = {
 export const QUEUE_JOB_NAMES = {
   SCAN_TENANT: "scan-tenant",
   FIX_DRIFT: "fix-drift",
+  RECHECK_INVENTORY: "recheck-inventory",
   DLQ_FIX: "dlq-fix",
 } as const;

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ChannelType, DriftEvent, DriftStatus, TenantChannelConfig, TenantChannelStatus } from "@prisma/client";
+import { ChannelType, DriftEvent, DriftStatus, Prisma, TenantChannelConfig, TenantChannelStatus } from "@prisma/client";
 import { buildFixIdempotencyKey } from "../fixes/fix-job.helpers";
 import { FixJobPayload } from "../fixes/fix-job.types";
 import { OmsReaderService } from "../oms/oms-reader.service";
@@ -8,6 +8,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { ShopifyInventoryService } from "../shopify/shopify-inventory.service";
+import { calculateOmsAvailable, compareInventory, driftThresholdFromEnv } from "./inventory-comparison";
+import { nextCursorFromRows, scanCursorForWindow } from "./scan-cursor";
 import { RecheckScanResult, ScanJobPayload, ScanJobResult } from "./scan-job.types";
 
 const OPEN_DRIFT_STATUSES = [
@@ -71,17 +73,18 @@ export class ScanProcessorService {
       update: {},
     });
 
+    const fromCursor = scanCursorForWindow({
+      trigger: payload.trigger,
+      storedCursor: {
+        lastSeenAt: storedCursor.lastSeenAt,
+        lastSeenId: storedCursor.lastSeenId,
+      },
+      windowStart,
+    });
+
     const rows = await this.omsReader.readChangedInventory({
       tenantId: payload.tenantId,
-      fromCursor: payload.trigger === "scheduled"
-        ? {
-            lastSeenAt: storedCursor.lastSeenAt,
-            lastSeenId: storedCursor.lastSeenId,
-          }
-        : {
-            lastSeenAt: windowStart,
-            lastSeenId: "",
-          },
+      fromCursor,
       windowStart,
       windowEnd,
       sku: payload.sku,
@@ -105,8 +108,8 @@ export class ScanProcessorService {
       failedManual += outcome.failedManual;
     }
 
-    if (payload.trigger === "scheduled" && rows.length > 0) {
-      const last = rows[rows.length - 1];
+    const nextCursor = nextCursorFromRows(rows);
+    if (payload.trigger === "scheduled" && nextCursor?.lastSeenAt) {
       await this.prisma.driftScanCursor.update({
         where: {
           tenantId_channel: {
@@ -115,8 +118,8 @@ export class ScanProcessorService {
           },
         },
         data: {
-          lastSeenAt: last.updatedAt,
-          lastSeenId: last.rowId,
+          lastSeenAt: nextCursor.lastSeenAt,
+          lastSeenId: nextCursor.lastSeenId,
         },
       });
     }
@@ -127,7 +130,7 @@ export class ScanProcessorService {
       detectedDrifts,
       resolvedDuringScan,
       failedManual,
-      cursorAdvanced: payload.trigger === "scheduled" && rows.length > 0,
+      cursorAdvanced: payload.trigger === "scheduled" && Boolean(nextCursor),
     };
   }
 
@@ -215,7 +218,7 @@ export class ScanProcessorService {
       },
     });
 
-    const omsAvailable = Math.max(0, row.stockedQuantity - row.reservedQuantity);
+    const omsAvailable = calculateOmsAvailable(row.stockedQuantity, row.reservedQuantity);
 
     if (!mapping) {
       await this.createOrUpdateDrift({
@@ -236,19 +239,23 @@ export class ScanProcessorService {
 
     try {
       const channelAvailable = await this.shopifyInventory.getAvailableQuantity(tenantConfig, mapping);
-      const drift = omsAvailable - channelAvailable;
+      const comparison = compareInventory({
+        omsAvailable,
+        channelAvailable,
+        threshold: driftThresholdFromEnv(),
+      });
 
-      if (Math.abs(drift) > 0) {
+      if (comparison.hasDrift) {
         const driftEvent = await this.createOrUpdateDrift({
           tenantId,
           sku: row.sku,
           locationId: row.locationId,
-          omsAvailable,
-          channelAvailable,
+          omsAvailable: comparison.omsAvailable,
+          channelAvailable: comparison.channelAvailable,
           status: DriftStatus.FIX_QUEUED,
           reason: "AUTO_FIX_QUEUED",
         });
-        await this.enqueueFix(driftEvent, omsAvailable, scanWindow);
+        await this.enqueueFix(driftEvent, comparison.omsAvailable, scanWindow);
         return {
           detectedDrifts: 1,
           resolvedDuringScan: 0,
@@ -265,8 +272,8 @@ export class ScanProcessorService {
           status: { in: OPEN_DRIFT_STATUSES },
         },
         data: {
-          omsAvailable,
-          channelAvailable,
+          omsAvailable: comparison.omsAvailable,
+          channelAvailable: comparison.channelAvailable,
           drift: 0,
           status: DriftStatus.RESOLVED,
           reason: "IN_SYNC_DURING_SCAN",
@@ -314,7 +321,46 @@ export class ScanProcessorService {
     status: DriftStatus;
     reason: string;
   }): Promise<DriftEvent> {
-    const open = await this.prisma.driftEvent.findFirst({
+    const open = await this.findReusableDrift(input);
+
+    if (open) {
+      return this.updateDrift(open.id, input);
+    }
+
+    try {
+      return await this.prisma.driftEvent.create({
+        data: {
+          tenantId: input.tenantId,
+          channel: ChannelType.SHOPIFY,
+          sku: input.sku,
+          locationId: input.locationId,
+          omsAvailable: input.omsAvailable,
+          channelAvailable: input.channelAvailable,
+          drift: input.omsAvailable - input.channelAvailable,
+          status: input.status,
+          reason: input.reason,
+        },
+      });
+    } catch (error) {
+      if (!this.isUniqueConstraintError(error)) {
+        throw error;
+      }
+
+      const existing = await this.findReusableDrift(input);
+      if (!existing) {
+        throw error;
+      }
+
+      return this.updateDrift(existing.id, input);
+    }
+  }
+
+  private findReusableDrift(input: {
+    tenantId: string;
+    sku: string;
+    locationId: string;
+  }) {
+    return this.prisma.driftEvent.findFirst({
       where: {
         tenantId: input.tenantId,
         channel: ChannelType.SHOPIFY,
@@ -326,26 +372,17 @@ export class ScanProcessorService {
         createdAt: "desc",
       },
     });
+  }
 
-    if (open) {
-      return this.prisma.driftEvent.update({
-        where: { id: open.id },
-        data: {
-          omsAvailable: input.omsAvailable,
-          channelAvailable: input.channelAvailable,
-          drift: input.omsAvailable - input.channelAvailable,
-          status: input.status,
-          reason: input.reason,
-        },
-      });
-    }
-
-    return this.prisma.driftEvent.create({
+  private updateDrift(id: string, input: {
+    omsAvailable: number;
+    channelAvailable: number;
+    status: DriftStatus;
+    reason: string;
+  }) {
+    return this.prisma.driftEvent.update({
+      where: { id },
       data: {
-        tenantId: input.tenantId,
-        channel: ChannelType.SHOPIFY,
-        sku: input.sku,
-        locationId: input.locationId,
         omsAvailable: input.omsAvailable,
         channelAvailable: input.channelAvailable,
         drift: input.omsAvailable - input.channelAvailable,
@@ -353,6 +390,10 @@ export class ScanProcessorService {
         reason: input.reason,
       },
     });
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
   }
 
   private async enqueueFix(driftEvent: DriftEvent, targetQty: number, scanWindow: string) {

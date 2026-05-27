@@ -5,7 +5,7 @@ type RequestWithRawBody = {
   rawBody?: Buffer;
 };
 
-@Controller("webhooks/shopify")
+@Controller(["webhooks/shopify", "v1/webhooks/shopify"])
 export class ShopifyWebhooksController {
   constructor(private readonly shopifyWebhooksService: ShopifyWebhooksService) {}
 

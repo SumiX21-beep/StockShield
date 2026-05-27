@@ -32,10 +32,22 @@ Expected response:
 ```json
 {
   "ok": true,
+  "status": "ok",
   "service": "StockShield",
+  "version": "1.0.0",
   "timestamp": "2026-05-23T00:00:00.000Z"
 }
 ```
+
+Additional health endpoints:
+
+```bash
+GET /health/live
+GET /health/ready
+```
+
+`/health/ready` reports whether required runtime settings like `DATABASE_URL`,
+`REDIS_URL`, `STOCKSHIELD_ENCRYPTION_KEY`, and the internal API token are present.
 
 ## Next Small Step (Day 2)
 
@@ -85,6 +97,12 @@ npm run prisma:generate
 npm run prisma:migrate
 ```
 
+For non-interactive environments, apply checked-in migrations with:
+
+```bash
+npm run prisma:deploy
+```
+
 5. Run API:
 
 ```bash
@@ -105,10 +123,27 @@ PowerShell:
 $env:STOCKSHIELD_ADMIN_AUTH = "Authorization: Bearer change-this-local-admin-token"
 ```
 
+The planned v1 admin API is served under `/v1/admin`. The older unversioned
+local routes are still available as compatibility aliases during development.
+
+Optional tenant-scope protection:
+
+```bash
+curl "http://localhost:3000/v1/admin/drift-events?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -H "X-StockShield-Tenant-Id: store_1"
+```
+
+If `X-StockShield-Tenant-Id` is supplied, it must match any `tenantId` in the
+query string or request body. Set `STOCKSHIELD_ALLOWED_TENANT_IDS` to a
+comma-separated allow-list to restrict which tenants the service token can touch.
+Set `STOCKSHIELD_TENANT_SCOPE_REQUIRED=true` when every admin request must carry
+an explicit tenant scope.
+
 Create drift event:
 
 ```bash
-curl -X POST http://localhost:3000/drift-events \
+curl -X POST http://localhost:3000/v1/admin/drift-events \
   -H "Content-Type: application/json" \
   -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"locationId\":\"loc_ny\",\"omsAvailable\":100,\"channelAvailable\":95}"
@@ -117,21 +152,21 @@ curl -X POST http://localhost:3000/drift-events \
 List drift events:
 
 ```bash
-curl "http://localhost:3000/drift-events?page=1&limit=20&tenantId=store_1" \
+curl "http://localhost:3000/v1/admin/drift-events?page=1&limit=20&tenantId=store_1" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Get one drift event:
 
 ```bash
-curl "http://localhost:3000/drift-events/<event_id>" \
+curl "http://localhost:3000/v1/admin/drift-events/<event_id>" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Mark a drift event for retry:
 
 ```bash
-curl -X POST "http://localhost:3000/drift-events/<event_id>/retry" \
+curl -X POST "http://localhost:3000/v1/admin/drift-events/<event_id>/retry" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
@@ -157,7 +192,7 @@ npm run prisma:migrate
 Store a tenant Shopify config:
 
 ```bash
-curl -X POST http://localhost:3000/tenant-channel-configs \
+curl -X POST http://localhost:3000/v1/admin/tenant-channel-configs \
   -H "Content-Type: application/json" \
   -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"shopDomain\":\"demo.myshopify.com\",\"accessToken\":\"shpat_example\",\"apiVersion\":\"2025-10\"}"
@@ -166,14 +201,14 @@ curl -X POST http://localhost:3000/tenant-channel-configs \
 List tenant Shopify configs:
 
 ```bash
-curl "http://localhost:3000/tenant-channel-configs?tenantId=store_1" \
+curl "http://localhost:3000/v1/admin/tenant-channel-configs?tenantId=store_1" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Create or update an OMS-to-Shopify SKU/location mapping:
 
 ```bash
-curl -X POST http://localhost:3000/sku-location-maps \
+curl -X POST http://localhost:3000/v1/admin/sku-location-maps \
   -H "Content-Type: application/json" \
   -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"omsLocationId\":\"loc_ny\",\"shopifyInventoryItemId\":\"123456789\",\"shopifyLocationId\":\"987654321\"}"
@@ -182,14 +217,14 @@ curl -X POST http://localhost:3000/sku-location-maps \
 List SKU/location mappings:
 
 ```bash
-curl "http://localhost:3000/sku-location-maps?tenantId=store_1&isActive=true" \
+curl "http://localhost:3000/v1/admin/sku-location-maps?tenantId=store_1&isActive=true" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Trigger a manual drift scan job:
 
 ```bash
-curl -X POST http://localhost:3000/scans/trigger \
+curl -X POST http://localhost:3000/v1/admin/scans/trigger \
   -H "Content-Type: application/json" \
   -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"tenantId\":\"store_1\",\"reason\":\"manual test scan\"}"
@@ -208,6 +243,14 @@ npm run dev:scheduler
 The scheduler enqueues one `drift.scan` job per active Shopify tenant every `DRIFT_SCAN_INTERVAL_MINUTES`.
 The worker consumes scan jobs, reads changed OMS inventory rows, compares Shopify inventory, then enqueues `drift.fix` jobs for mismatches.
 
+Week 2 scan behavior:
+
+- OMS available quantity is `max(0, stocked_quantity - reserved_quantity)`.
+- `DRIFT_THRESHOLD=0` means exact match is required; set a positive integer to ignore small differences.
+- Scheduled cursors use `(updated_at, row_id)` tie-breaking so rows with the same timestamp are not skipped.
+- The cursor advances only after all rows returned for the scan window are processed.
+- Duplicate open drift creation is guarded by a Postgres partial unique index plus retry-on-conflict logic.
+
 The fix worker:
 
 - Uses Redis locks per `tenant + sku + location`.
@@ -219,13 +262,14 @@ The fix worker:
 Manual retry now queues a fresh fix job:
 
 ```bash
-curl -X POST "http://localhost:3000/drift-events/<event_id>/retry"
+curl -X POST "http://localhost:3000/v1/admin/drift-events/<event_id>/retry" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
 Ignore a drift event:
 
 ```bash
-curl -X POST "http://localhost:3000/drift-events/<event_id>/ignore" \
+curl -X POST "http://localhost:3000/v1/admin/drift-events/<event_id>/ignore" \
   -H "Content-Type: application/json" \
   -H "$STOCKSHIELD_ADMIN_AUTH" \
   -d "{\"reason\":\"known warehouse adjustment\",\"actor\":\"ops@example.com\"}"
@@ -234,7 +278,7 @@ curl -X POST "http://localhost:3000/drift-events/<event_id>/ignore" \
 Get drift summary counters:
 
 ```bash
-curl "http://localhost:3000/drift-events/summary?tenantId=store_1" \
+curl "http://localhost:3000/v1/admin/summary?tenantId=store_1" \
   -H "$STOCKSHIELD_ADMIN_AUTH"
 ```
 
@@ -245,7 +289,7 @@ Configure `SHOPIFY_WEBHOOK_SECRET` with the Shopify app client secret. The API v
 Inventory webhooks should target:
 
 ```bash
-POST /webhooks/shopify/inventory-levels-update
+POST /v1/webhooks/shopify/inventory-levels-update
 ```
 
 When a valid webhook arrives, StockShield maps Shopify `inventory_item_id + location_id` back to an OMS SKU/location and enqueues a `drift.recheck` job. The worker then compares the current OMS quantity with Shopify and queues a fix if drift exists.

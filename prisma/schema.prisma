@@ -62,6 +62,8 @@ model DriftEvent {
 
   @@index([tenantId, channel, status])
   @@index([tenantId, channel, sku, locationId])
+  // The baseline migration also creates a Postgres partial unique index for
+  // open drift states on tenant/channel/sku/location.
 }
 
 model TenantChannelConfig {

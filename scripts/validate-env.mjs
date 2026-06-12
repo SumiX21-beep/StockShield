@@ -13,7 +13,7 @@ const warnings = [];
 const commonRequired = ["DATABASE_URL", "REDIS_URL", "STOCKSHIELD_ENCRYPTION_KEY"];
 const roleRequired = {
   api: ["SHOPIFY_WEBHOOK_SECRET"],
-  worker: ["OMS_DATABASE_URL"],
+  worker: process.env.STOCKSHIELD_OMS_SOURCE === "internal" ? [] : ["OMS_DATABASE_URL"],
   scheduler: [],
 };
 

@@ -47,7 +47,7 @@ describe("DriftFixWorkerService", () => {
     assert.equal(result.status, "failed-manual");
     assert.equal(dlqAdds.length, 1);
     assert.equal(dlqAdds[0].name, QUEUE_JOB_NAMES.DLQ_FIX);
-    assert.equal(dlqAdds[0].options.jobId, `dlq:${QUEUE_NAMES.DRIFT_FIX}:fix_job_1`);
+    assert.equal(dlqAdds[0].options.jobId, `dlq__${QUEUE_NAMES.DRIFT_FIX}__fix_job_1`);
     assert.deepEqual(dlqAdds[0].payload, {
       sourceQueue: QUEUE_NAMES.DRIFT_FIX,
       sourceJobId: "fix_job_1",

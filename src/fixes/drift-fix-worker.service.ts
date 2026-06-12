@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Job, Worker } from "bullmq";
+import { bullMqJobId } from "../queues/bullmq-job-id";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { DriftFixProcessorService } from "./drift-fix-processor.service";
@@ -94,7 +95,7 @@ export class DriftFixWorkerService implements OnModuleInit, OnModuleDestroy {
       maxAttempts: Number(job.opts.attempts ?? 1),
       failedAt: new Date().toISOString(),
     }, {
-      jobId: `dlq:${QUEUE_NAMES.DRIFT_FIX}:${String(job.id)}`,
+      jobId: bullMqJobId("dlq", QUEUE_NAMES.DRIFT_FIX, String(job.id)),
     });
   }
 }

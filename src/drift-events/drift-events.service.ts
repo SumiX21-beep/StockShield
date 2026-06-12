@@ -4,8 +4,10 @@ import { AlertsService } from "../alerts/alerts.service";
 import { AuthenticatedRequest } from "../auth/auth.types";
 import { buildFixIdempotencyKey } from "../fixes/fix-job.helpers";
 import { FixJobPayload } from "../fixes/fix-job.types";
+import { RootCauseService } from "../inventory/root-cause.service";
 import { LiveEventsService } from "../live-events/live-events.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { toBullMqJobId } from "../queues/bullmq-job-id";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { RiskService } from "../risk/risk.service";
@@ -29,9 +31,21 @@ export class DriftEventsService {
     private readonly alertsService: AlertsService,
     private readonly liveEventsService: LiveEventsService,
     private readonly riskService: RiskService,
+    private readonly rootCauseService: RootCauseService,
   ) {}
 
   async create(input: CreateDriftEventDto) {
+    const [rootCause, latestSyncJob] = await Promise.all([
+      this.rootCauseService.classify(input),
+      this.prisma.inventorySyncOutbox.findFirst({
+        where: {
+          tenantId: input.tenantId,
+          sku: input.sku,
+          locationId: input.locationId,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
     const driftEvent = await this.prisma.driftEvent.create({
       data: {
         tenantId: input.tenantId,
@@ -42,6 +56,11 @@ export class DriftEventsService {
         drift: input.omsAvailable - input.channelAvailable,
         status: input.status ?? DriftStatus.DETECTED,
         reason: input.reason,
+        rootCause,
+        expectedSellable: input.omsAvailable,
+        shopifyAvailable: input.channelAvailable,
+        lastSyncJobId: latestSyncJob?.id,
+        lostRevenueRisk: Math.abs(input.omsAvailable - input.channelAvailable),
       },
     });
 
@@ -219,7 +238,7 @@ export class DriftEventsService {
 
     const queue = this.queueService.getQueue(QUEUE_NAMES.DRIFT_FIX);
     const job = await queue.add(QUEUE_JOB_NAMES.FIX_DRIFT, payload, {
-      jobId: idempotencyKey,
+      jobId: toBullMqJobId(idempotencyKey),
     });
 
     const updated = await this.prisma.driftEvent.update({

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ChannelType, DriftStatus, TenantChannelStatus } from "@prisma/client";
+import { ChannelType, DriftRootCause, DriftStatus, TenantChannelStatus } from "@prisma/client";
 import { QUEUE_JOB_NAMES } from "../queues/queue.constants";
 import { ScanProcessorService } from "./scan-processor.service";
 
@@ -34,6 +34,9 @@ describe("ScanProcessorService", () => {
       },
       tenantSkuLocationMap: {
         findFirst: async () => skuLocationMap(),
+      },
+      inventorySyncOutbox: {
+        findFirst: async () => null,
       },
       driftEvent: {
         findFirst: async () => null,
@@ -83,6 +86,7 @@ describe("ScanProcessorService", () => {
       sideEffects().alerts as never,
       sideEffects().live as never,
       sideEffects().risk as never,
+      sideEffects().rootCause as never,
     );
 
     const result = await service.process({
@@ -112,9 +116,14 @@ describe("ScanProcessorService", () => {
       drift: 3,
       status: DriftStatus.FIX_QUEUED,
       reason: "AUTO_FIX_QUEUED",
+      rootCause: DriftRootCause.MANUAL_SHOPIFY_EDIT,
+      expectedSellable: 10,
+      shopifyAvailable: 7,
+      lastSyncJobId: undefined,
+      lostRevenueRisk: 3,
     });
     assert.equal(calls.queuedFix?.name, QUEUE_JOB_NAMES.FIX_DRIFT);
-    assert.match(String(calls.queuedFix?.options.jobId), /^fix:tenant_1:SHOPIFY:SKU-1:loc_1:10:/);
+    assert.match(String(calls.queuedFix?.options.jobId), /^fix_tenant_1_SHOPIFY_SKU-1_loc_1_10_/);
     assert.deepEqual(calls.queuedFix?.payload, {
       driftEventId: "drift_1",
       tenantId: "tenant_1",
@@ -123,7 +132,7 @@ describe("ScanProcessorService", () => {
       locationId: "loc_1",
       targetQty: 10,
       cause: "scan-detected",
-      idempotencyKey: calls.queuedFix?.options.jobId,
+      idempotencyKey: "fix:tenant_1:SHOPIFY:SKU-1:loc_1:10:2026-05-27T00:00:00.000Z:2026-05-27T00:05:00.000Z",
     });
     assert.deepEqual(calls.cursorUpdate, {
       where: {
@@ -156,6 +165,9 @@ describe("ScanProcessorService", () => {
         update: async (args: unknown) => args,
       },
       tenantSkuLocationMap: {
+        findFirst: async () => null,
+      },
+      inventorySyncOutbox: {
         findFirst: async () => null,
       },
       driftEvent: {
@@ -197,6 +209,7 @@ describe("ScanProcessorService", () => {
       sideEffects().alerts as never,
       sideEffects().live as never,
       sideEffects().risk as never,
+      sideEffects().rootCause as never,
     );
 
     const result = await service.process({
@@ -220,6 +233,11 @@ describe("ScanProcessorService", () => {
       drift: 0,
       status: DriftStatus.FAILED_MANUAL,
       reason: "MAPPING_MISSING",
+      rootCause: DriftRootCause.MAPPING_MISSING,
+      expectedSellable: 0,
+      shopifyAvailable: 0,
+      lastSyncJobId: undefined,
+      lostRevenueRisk: 0,
     });
   });
 });
@@ -264,6 +282,12 @@ function sideEffects() {
     },
     risk: {
       refreshForEvent: async () => undefined,
+    },
+    rootCause: {
+      classify: async (input: { reason?: string }) =>
+        input.reason === "MAPPING_MISSING"
+          ? DriftRootCause.MAPPING_MISSING
+          : DriftRootCause.MANUAL_SHOPIFY_EDIT,
     },
   };
 }

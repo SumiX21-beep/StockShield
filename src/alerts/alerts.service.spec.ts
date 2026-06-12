@@ -35,6 +35,11 @@ describe("AlertsService", () => {
         drift: 5,
         status: DriftStatus.FIX_QUEUED,
         reason: "AUTO_FIX_QUEUED",
+        rootCause: null,
+        expectedSellable: null,
+        shopifyAvailable: null,
+        lastSyncJobId: null,
+        lostRevenueRisk: null,
         createdAt: new Date("2026-05-27T00:00:00Z"),
         updatedAt: new Date("2026-05-27T00:00:00Z"),
       });

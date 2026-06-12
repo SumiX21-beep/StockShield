@@ -83,6 +83,67 @@ enum SubscriptionStatus {
   CANCELED
 }
 
+enum InventoryLedgerMovementType {
+  STOCK_ADDED
+  ORDER_RESERVED
+  ORDER_CANCELLED
+  ORDER_FULFILLED
+  RETURN_RESTOCKED
+  MANUAL_ADJUSTMENT
+  WAREHOUSE_CORRECTION
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  RELEASED
+  FULFILLED
+}
+
+enum OmsOrderStatus {
+  RESERVED
+  CANCELLED
+  FULFILLED
+}
+
+enum InventorySyncStatus {
+  QUEUED
+  SYNCING
+  SUCCEEDED
+  FAILED
+}
+
+enum InventorySyncAttemptStatus {
+  STARTED
+  SUCCESS
+  FAILED
+}
+
+enum HybridOrderStatus {
+  CREATED
+  RESERVED
+  CONFIRMED
+  FAILED
+}
+
+enum HybridDriftStatus {
+  DETECTED
+  FIX_QUEUED
+  FIXING
+  RESOLVED
+  FAILED_MANUAL
+  IGNORED
+}
+
+enum DriftRootCause {
+  FAILED_SYNC
+  MANUAL_SHOPIFY_EDIT
+  MAPPING_MISSING
+  RESERVATION_MISMATCH
+  RETURN_CANCEL_MISMATCH
+  SHOPIFY_API_FAILURE
+  UNKNOWN
+}
+
 model DriftEvent {
   id               String      @id @default(uuid())
   tenantId         String
@@ -94,6 +155,11 @@ model DriftEvent {
   drift            Int
   status           DriftStatus @default(DETECTED)
   reason           String?
+  rootCause        DriftRootCause?
+  expectedSellable Int?
+  shopifyAvailable Int?
+  lastSyncJobId    String?
+  lostRevenueRisk  Int?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
@@ -102,6 +168,7 @@ model DriftEvent {
 
   @@index([tenantId, channel, status])
   @@index([tenantId, channel, sku, locationId])
+  @@index([tenantId, rootCause])
   // The baseline migration also creates a Postgres partial unique index for
   // open drift states on tenant/channel/sku/location.
 }
@@ -268,4 +335,272 @@ model WebhookRecheckEvent {
   updatedAt     DateTime      @updatedAt
 
   @@index([tenantId, channel, status])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  tenantId    String
+  title       String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  skus Sku[]
+
+  @@index([tenantId, isActive])
+}
+
+model Sku {
+  id             String   @id @default(uuid())
+  tenantId       String
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  sku            String
+  title          String
+  safetyBuffer   Int      @default(0)
+  unitPriceCents Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, isActive])
+}
+
+model WarehouseLocation {
+  id        String   @id @default(uuid())
+  tenantId  String
+  locationId String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationId])
+  @@index([tenantId, isActive])
+}
+
+model InventoryBalance {
+  id               String   @id @default(uuid())
+  tenantId         String
+  sku              String
+  locationId       String
+  physicalQuantity Int      @default(0)
+  reservedQuantity Int      @default(0)
+  safetyBuffer     Int      @default(0)
+  sellableQuantity Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, sku, locationId])
+  @@index([tenantId, locationId])
+  @@index([tenantId, sku])
+}
+
+model InventoryLedgerEntry {
+  id                    String                      @id @default(uuid())
+  tenantId              String
+  sku                   String
+  locationId            String
+  movementType          InventoryLedgerMovementType
+  physicalDelta         Int                         @default(0)
+  reservedDelta         Int                         @default(0)
+  physicalQuantityAfter Int
+  reservedQuantityAfter Int
+  sellableQuantityAfter Int
+  sourceType            String?
+  sourceId              String?
+  reason                String?
+  metadata              Json?
+  createdAt             DateTime                    @default(now())
+
+  @@index([tenantId, sku, locationId, createdAt])
+  @@index([tenantId, movementType, createdAt])
+  @@index([sourceType, sourceId])
+}
+
+model OmsOrder {
+  id              String         @id @default(uuid())
+  tenantId        String
+  externalOrderId String?
+  status          OmsOrderStatus @default(RESERVED)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  lines OmsOrderLine[]
+
+  @@unique([tenantId, externalOrderId])
+  @@index([tenantId, status, createdAt])
+}
+
+model OmsOrderLine {
+  id             String   @id @default(uuid())
+  orderId        String
+  order          OmsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  tenantId       String
+  sku            String
+  locationId     String
+  quantity       Int
+  unitPriceCents Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  reservations StockReservation[]
+
+  @@index([tenantId, sku, locationId])
+}
+
+model StockReservation {
+  id          String                 @id @default(uuid())
+  tenantId    String
+  orderId     String
+  orderLineId String
+  orderLine   OmsOrderLine           @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  sku         String
+  locationId  String
+  quantity    Int
+  status      StockReservationStatus @default(ACTIVE)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@unique([orderLineId])
+  @@index([tenantId, sku, locationId, status])
+  @@index([tenantId, orderId])
+}
+
+model InventorySyncOutbox {
+  id                     String              @id @default(uuid())
+  tenantId               String
+  sku                    String
+  locationId             String
+  targetSellableQuantity Int
+  status                 InventorySyncStatus @default(QUEUED)
+  attempts               Int                 @default(0)
+  idempotencyKey         String              @unique
+  sourceType             String?
+  sourceId               String?
+  lastError              String?
+  nextRunAt              DateTime?
+  completedAt            DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  attemptsLog InventorySyncAttempt[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, sku, locationId, createdAt])
+}
+
+model InventorySyncAttempt {
+  id                     String                     @id @default(uuid())
+  syncJobId              String
+  syncJob                InventorySyncOutbox        @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+  tenantId               String
+  status                 InventorySyncAttemptStatus @default(STARTED)
+  targetSellableQuantity Int
+  requestPayload         Json?
+  responsePayload        Json?
+  errorMessage           String?
+  createdAt              DateTime                   @default(now())
+
+  @@index([syncJobId, status])
+  @@index([tenantId, status, createdAt])
+}
+
+model HybridProduct {
+  id        String   @id @default(uuid())
+  tenantId  String   @default("demo") @map("tenant_id")
+  sku       String
+  name      String
+  price     Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@map("products")
+}
+
+model HybridInventory {
+  id               String   @id @default(uuid())
+  tenantId         String   @default("demo") @map("tenant_id")
+  sku              String
+  locationId       String   @map("location_id")
+  physicalQuantity Int      @default(0) @map("physical_quantity")
+  reservedQuantity Int      @default(0) @map("reserved_quantity")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sku, locationId])
+  @@index([tenantId, sku])
+  @@index([tenantId, locationId])
+  @@map("inventory")
+}
+
+model HybridOrder {
+  id               String            @id @default(uuid())
+  tenantId         String            @default("demo") @map("tenant_id")
+  sku              String
+  locationId       String            @map("location_id")
+  quantity         Int
+  status           HybridOrderStatus @default(CREATED)
+  failureReason    String?           @map("failure_reason")
+  queuedAt         DateTime?         @map("queued_at")
+  reservedAt       DateTime?         @map("reserved_at")
+  confirmedAt      DateTime?         @map("confirmed_at")
+  externalSyncedAt DateTime?         @map("external_synced_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, sku, locationId])
+  @@map("orders")
+}
+
+model HybridExternalInventory {
+  id                String   @id @default(uuid())
+  tenantId          String   @default("demo") @map("tenant_id")
+  sku               String
+  locationId        String   @map("location_id")
+  availableQuantity Int      @default(0) @map("available_quantity")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sku, locationId])
+  @@index([tenantId, sku])
+  @@map("external_inventory")
+}
+
+model HybridExternalOrder {
+  id              String   @id @default(uuid())
+  tenantId        String   @default("demo") @map("tenant_id")
+  coreOrderId     String?  @unique @map("core_order_id")
+  sku             String
+  locationId      String   @map("location_id")
+  quantity        Int
+  status          String   @default("ACCEPTED")
+  requestPayload  Json?    @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, createdAt])
+  @@map("external_orders")
+}
+
+model HybridInventoryDrift {
+  id          String            @id @default(uuid())
+  tenantId    String            @default("demo") @map("tenant_id")
+  sku         String
+  locationId  String            @map("location_id")
+  expectedQty Int               @map("expected_qty")
+  actualQty   Int               @map("actual_qty")
+  status      HybridDriftStatus @default(DETECTED)
+  resolution  String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, sku, locationId])
+  @@map("inventory_drift")
 }

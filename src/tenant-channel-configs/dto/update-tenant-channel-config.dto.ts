@@ -4,6 +4,11 @@ import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
 export class UpdateTenantChannelConfigDto {
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  tenantId?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(255)
   shopDomain?: string;
 

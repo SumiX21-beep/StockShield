@@ -5,6 +5,8 @@ import { AppController } from "./app.controller";
 import { AuthModule } from "./auth/auth.module";
 import { TokenCryptoModule } from "./crypto/token-crypto.module";
 import { DriftEventsModule } from "./drift-events/drift-events.module";
+import { HybridModule } from "./hybrid/hybrid.module";
+import { InventoryModule } from "./inventory/inventory.module";
 import { LiveEventsModule } from "./live-events/live-events.module";
 import { ObservabilityModule } from "./observability/observability.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -25,6 +27,8 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     RiskModule,
     TokenCryptoModule,
     QueuesModule,
+    HybridModule,
+    InventoryModule,
     DriftEventsModule,
     TenantChannelConfigsModule,
     SkuLocationMapsModule,

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ChannelType, TenantChannelStatus } from "@prisma/client";
+import { bullMqJobId } from "../queues/bullmq-job-id";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -70,7 +71,7 @@ export class ScanSchedulerService implements OnModuleInit, OnModuleDestroy {
       };
 
       return queue.add(QUEUE_JOB_NAMES.SCAN_TENANT, payload, {
-        jobId: `scheduled-scan:${config.tenantId}:${slot}`,
+        jobId: bullMqJobId("scheduled-scan", config.tenantId, slot),
       });
     });
 

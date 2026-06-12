@@ -26,9 +26,13 @@
     "prisma:deploy": "prisma migrate deploy",
     "validate:env": "node scripts/validate-env.mjs",
     "smoke": "node scripts/smoke-test.mjs",
+    "smoke:hybrid": "node scripts/hybrid-smoke.mjs",
     "load:check": "node scripts/load-check.mjs",
+    "load:hybrid": "node scripts/load-hybrid-orders.mjs",
     "demo:api": "node scripts/demo-flow.mjs",
-    "seed:demo": "node scripts/seed-demo.mjs"
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "local:start": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "local:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-local.ps1"
   },
   "repository": {
     "type": "git",

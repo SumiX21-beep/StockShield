@@ -3,10 +3,12 @@ import { ChannelType, DriftEvent, DriftStatus, Prisma, TenantChannelConfig, Tena
 import { AlertsService } from "../alerts/alerts.service";
 import { buildFixIdempotencyKey } from "../fixes/fix-job.helpers";
 import { FixJobPayload } from "../fixes/fix-job.types";
+import { RootCauseService } from "../inventory/root-cause.service";
 import { LiveEventsService } from "../live-events/live-events.service";
 import { OmsReaderService } from "../oms/oms-reader.service";
 import { OmsChangedInventoryRow } from "../oms/oms-reader.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { toBullMqJobId } from "../queues/bullmq-job-id";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { RiskService } from "../risk/risk.service";
@@ -35,6 +37,7 @@ export class ScanProcessorService {
     private readonly alertsService: AlertsService,
     private readonly liveEventsService: LiveEventsService,
     private readonly riskService: RiskService,
+    private readonly rootCauseService: RootCauseService,
   ) {}
 
   async process(payload: ScanJobPayload): Promise<ScanJobResult> {
@@ -88,7 +91,7 @@ export class ScanProcessorService {
       windowStart,
     });
 
-    const rows = await this.omsReader.readChangedInventory({
+    const rows = await this.readChangedInventory({
       tenantId: payload.tenantId,
       fromCursor,
       windowStart,
@@ -166,7 +169,7 @@ export class ScanProcessorService {
       };
     }
 
-    const row = await this.omsReader.readCurrentInventory({
+    const row = await this.readCurrentInventory({
       tenantId: input.tenantId,
       sku: input.sku,
       locationId: input.locationId,
@@ -318,6 +321,86 @@ export class ScanProcessorService {
     return Math.floor(value);
   }
 
+  private readChangedInventory(input: {
+    tenantId: string;
+    fromCursor: { lastSeenAt: Date | null; lastSeenId: string | null };
+    windowStart: Date;
+    windowEnd: Date;
+    sku?: string;
+    locationId?: string;
+    limit: number;
+  }) {
+    if (!this.useInternalOms()) {
+      return this.omsReader.readChangedInventory(input);
+    }
+
+    const cursorAt = input.fromCursor.lastSeenAt ?? input.windowStart;
+    const cursorId = input.fromCursor.lastSeenId ?? "";
+    return this.prisma.inventoryBalance.findMany({
+      where: {
+        tenantId: input.tenantId,
+        sku: input.sku,
+        locationId: input.locationId,
+        AND: [
+          { updatedAt: { lte: input.windowEnd } },
+          {
+            OR: [
+              { updatedAt: { gt: cursorAt } },
+              {
+                updatedAt: cursorAt,
+                id: { gt: cursorId },
+              },
+            ],
+          },
+        ],
+      },
+      orderBy: [
+        { updatedAt: "asc" },
+        { id: "asc" },
+      ],
+      take: input.limit,
+    }).then((balances) => balances.map((balance) => this.balanceToOmsRow(balance)));
+  }
+
+  private readCurrentInventory(input: {
+    tenantId: string;
+    sku: string;
+    locationId: string;
+  }) {
+    if (!this.useInternalOms()) {
+      return this.omsReader.readCurrentInventory(input);
+    }
+
+    return this.prisma.inventoryBalance.findUnique({
+      where: {
+        tenantId_sku_locationId: input,
+      },
+    }).then((balance) => balance ? this.balanceToOmsRow(balance) : null);
+  }
+
+  private balanceToOmsRow(balance: {
+    id: string;
+    sku: string;
+    locationId: string;
+    physicalQuantity: number;
+    reservedQuantity: number;
+    safetyBuffer: number;
+    updatedAt: Date;
+  }): OmsChangedInventoryRow {
+    return {
+      rowId: balance.id,
+      sku: balance.sku,
+      locationId: balance.locationId,
+      stockedQuantity: balance.physicalQuantity - balance.safetyBuffer,
+      reservedQuantity: balance.reservedQuantity,
+      updatedAt: balance.updatedAt,
+    };
+  }
+
+  private useInternalOms() {
+    return process.env.STOCKSHIELD_OMS_SOURCE === "internal";
+  }
+
   private async createOrUpdateDrift(input: {
     tenantId: string;
     sku: string;
@@ -327,10 +410,24 @@ export class ScanProcessorService {
     status: DriftStatus;
     reason: string;
   }): Promise<DriftEvent> {
+    const [rootCause, latestSyncJob] = await Promise.all([
+      this.rootCauseService.classify(input),
+      this.prisma.inventorySyncOutbox.findFirst({
+        where: {
+          tenantId: input.tenantId,
+          sku: input.sku,
+          locationId: input.locationId,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
     const open = await this.findReusableDrift(input);
 
     if (open) {
-      const updated = await this.updateDrift(open.id, input);
+      const updated = await this.updateDrift(open.id, input, {
+        rootCause,
+        lastSyncJobId: latestSyncJob?.id ?? null,
+      });
       await this.afterDriftMutation("drift.updated", updated, open.status);
       return updated;
     }
@@ -347,6 +444,11 @@ export class ScanProcessorService {
           drift: input.omsAvailable - input.channelAvailable,
           status: input.status,
           reason: input.reason,
+          rootCause,
+          expectedSellable: input.omsAvailable,
+          shopifyAvailable: input.channelAvailable,
+          lastSyncJobId: latestSyncJob?.id,
+          lostRevenueRisk: Math.abs(input.omsAvailable - input.channelAvailable),
         },
       });
       await this.afterDriftMutation("drift.created", created);
@@ -361,7 +463,10 @@ export class ScanProcessorService {
         throw error;
       }
 
-      const updated = await this.updateDrift(existing.id, input);
+      const updated = await this.updateDrift(existing.id, input, {
+        rootCause,
+        lastSyncJobId: latestSyncJob?.id ?? null,
+      });
       await this.afterDriftMutation("drift.updated", updated, existing.status);
       return updated;
     }
@@ -391,6 +496,9 @@ export class ScanProcessorService {
     channelAvailable: number;
     status: DriftStatus;
     reason: string;
+  }, context: {
+    rootCause: Awaited<ReturnType<RootCauseService["classify"]>>;
+    lastSyncJobId: string | null;
   }) {
     return this.prisma.driftEvent.update({
       where: { id },
@@ -400,6 +508,11 @@ export class ScanProcessorService {
         drift: input.omsAvailable - input.channelAvailable,
         status: input.status,
         reason: input.reason,
+        rootCause: context.rootCause,
+        expectedSellable: input.omsAvailable,
+        shopifyAvailable: input.channelAvailable,
+        lastSyncJobId: context.lastSyncJobId,
+        lostRevenueRisk: Math.abs(input.omsAvailable - input.channelAvailable),
       },
     });
   }
@@ -430,7 +543,7 @@ export class ScanProcessorService {
 
     const queue = this.queueService.getQueue(QUEUE_NAMES.DRIFT_FIX);
     await queue.add(QUEUE_JOB_NAMES.FIX_DRIFT, payload, {
-      jobId: idempotencyKey,
+      jobId: toBullMqJobId(idempotencyKey),
     });
   }
 

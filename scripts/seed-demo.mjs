@@ -80,6 +80,7 @@ try {
   });
 
   await seedMappings();
+  await seedInventoryCore();
   await seedDriftEvents();
   await seedRisks();
   await seedAlerts();
@@ -131,6 +132,16 @@ async function seedTenant() {
 async function resetDemoData() {
   await prisma.alertDeliveryLog.deleteMany({ where: { tenantId } });
   await prisma.skuRiskSnapshot.deleteMany({ where: { tenantId } });
+  await prisma.inventorySyncAttempt.deleteMany({ where: { tenantId } });
+  await prisma.inventorySyncOutbox.deleteMany({ where: { tenantId } });
+  await prisma.inventoryLedgerEntry.deleteMany({ where: { tenantId } });
+  await prisma.stockReservation.deleteMany({ where: { tenantId } });
+  await prisma.omsOrderLine.deleteMany({ where: { tenantId } });
+  await prisma.omsOrder.deleteMany({ where: { tenantId } });
+  await prisma.inventoryBalance.deleteMany({ where: { tenantId } });
+  await prisma.sku.deleteMany({ where: { tenantId } });
+  await prisma.product.deleteMany({ where: { tenantId } });
+  await prisma.warehouseLocation.deleteMany({ where: { tenantId } });
   await prisma.driftAttemptLog.deleteMany({
     where: {
       driftEvent: {
@@ -316,6 +327,197 @@ async function seedRisks() {
         riskLevel: "HIGH",
       },
     ],
+  });
+}
+
+async function seedInventoryCore() {
+  const products = [
+    {
+      title: "Black T-Shirt",
+      sku: "TSHIRT-BLK-M",
+      locationId: "loc_mumbai",
+      locationName: "Mumbai Warehouse",
+      physicalQuantity: 100,
+      reservedQuantity: 5,
+      safetyBuffer: 2,
+      unitPriceCents: 2499,
+    },
+    {
+      title: "Blue Denim",
+      sku: "DENIM-32-BLUE",
+      locationId: "loc_mumbai",
+      locationName: "Mumbai Warehouse",
+      physicalQuantity: 42,
+      reservedQuantity: 0,
+      safetyBuffer: 1,
+      unitPriceCents: 3999,
+    },
+    {
+      title: "White Sneaker",
+      sku: "SNEAKER-WHT-9",
+      locationId: "loc_delhi",
+      locationName: "Delhi Fulfillment Hub",
+      physicalQuantity: 18,
+      reservedQuantity: 0,
+      safetyBuffer: 0,
+      unitPriceCents: 5999,
+    },
+    {
+      title: "Grey Hoodie",
+      sku: "HOODIE-GRY-L",
+      locationId: "loc_bengaluru",
+      locationName: "Bengaluru Warehouse",
+      physicalQuantity: 80,
+      reservedQuantity: 3,
+      safetyBuffer: 1,
+      unitPriceCents: 4499,
+    },
+  ];
+
+  for (const item of products) {
+    const product = await prisma.product.create({
+      data: {
+        tenantId,
+        title: item.title,
+      },
+    });
+
+    await prisma.sku.create({
+      data: {
+        tenantId,
+        productId: product.id,
+        sku: item.sku,
+        title: item.title,
+        safetyBuffer: item.safetyBuffer,
+        unitPriceCents: item.unitPriceCents,
+      },
+    });
+
+    await prisma.warehouseLocation.upsert({
+      where: {
+        tenantId_locationId: {
+          tenantId,
+          locationId: item.locationId,
+        },
+      },
+      create: {
+        tenantId,
+        locationId: item.locationId,
+        name: item.locationName,
+      },
+      update: {
+        name: item.locationName,
+        isActive: true,
+      },
+    });
+
+    const sellableQuantity = Math.max(0, item.physicalQuantity - item.reservedQuantity - item.safetyBuffer);
+    await prisma.inventoryBalance.create({
+      data: {
+        tenantId,
+        sku: item.sku,
+        locationId: item.locationId,
+        physicalQuantity: item.physicalQuantity,
+        reservedQuantity: item.reservedQuantity,
+        safetyBuffer: item.safetyBuffer,
+        sellableQuantity,
+      },
+    });
+
+    await prisma.inventoryLedgerEntry.create({
+      data: {
+        tenantId,
+        sku: item.sku,
+        locationId: item.locationId,
+        movementType: "STOCK_ADDED",
+        physicalDelta: item.physicalQuantity,
+        reservedDelta: 0,
+        physicalQuantityAfter: item.physicalQuantity,
+        reservedQuantityAfter: 0,
+        sellableQuantityAfter: item.physicalQuantity - item.safetyBuffer,
+        sourceType: "DEMO_SEED",
+        reason: "Initial warehouse stock",
+      },
+    });
+
+    if (item.reservedQuantity > 0) {
+      await prisma.inventoryLedgerEntry.create({
+        data: {
+          tenantId,
+          sku: item.sku,
+          locationId: item.locationId,
+          movementType: "ORDER_RESERVED",
+          physicalDelta: 0,
+          reservedDelta: item.reservedQuantity,
+          physicalQuantityAfter: item.physicalQuantity,
+          reservedQuantityAfter: item.reservedQuantity,
+          sellableQuantityAfter: sellableQuantity,
+          sourceType: "DEMO_SEED",
+          reason: "Seeded active order reservation",
+        },
+      });
+    }
+
+    const syncJob = await prisma.inventorySyncOutbox.create({
+      data: {
+        tenantId,
+        sku: item.sku,
+        locationId: item.locationId,
+        targetSellableQuantity: sellableQuantity,
+        status: item.sku === "DENIM-32-BLUE" ? "FAILED" : "SUCCEEDED",
+        attempts: item.sku === "DENIM-32-BLUE" ? 8 : 1,
+        idempotencyKey: `demo-sync:${tenantId}:${item.sku}:${item.locationId}`,
+        sourceType: "DEMO_SEED",
+        sourceId: item.sku,
+        lastError: item.sku === "DENIM-32-BLUE" ? "Shopify Admin API rate limit persisted after retries" : null,
+        completedAt: item.sku === "DENIM-32-BLUE" ? null : new Date(),
+      },
+    });
+
+    await prisma.inventorySyncAttempt.create({
+      data: {
+        syncJobId: syncJob.id,
+        tenantId,
+        status: item.sku === "DENIM-32-BLUE" ? "FAILED" : "SUCCESS",
+        targetSellableQuantity: sellableQuantity,
+        requestPayload: {
+          sku: item.sku,
+          locationId: item.locationId,
+          targetSellableQuantity: sellableQuantity,
+        },
+        responsePayload: item.sku === "DENIM-32-BLUE" ? undefined : { inventory_level: { available: sellableQuantity } },
+        errorMessage: item.sku === "DENIM-32-BLUE" ? "Shopify Admin API rate limit persisted after retries" : undefined,
+      },
+    });
+  }
+
+  const order = await prisma.omsOrder.create({
+    data: {
+      tenantId,
+      externalOrderId: "shopify-demo-1001",
+      status: "RESERVED",
+    },
+  });
+  const line = await prisma.omsOrderLine.create({
+    data: {
+      orderId: order.id,
+      tenantId,
+      sku: "TSHIRT-BLK-M",
+      locationId: "loc_mumbai",
+      quantity: 5,
+      unitPriceCents: 2499,
+    },
+  });
+  await prisma.stockReservation.create({
+    data: {
+      tenantId,
+      orderId: order.id,
+      orderLineId: line.id,
+      sku: "TSHIRT-BLK-M",
+      locationId: "loc_mumbai",
+      quantity: 5,
+      status: "ACTIVE",
+    },
   });
 }
 

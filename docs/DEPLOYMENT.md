@@ -83,7 +83,7 @@ Before production use:
 
 - PostgreSQL for StockShield service tables.
 - Redis for BullMQ queues and drift locks.
-- Read-only OMS PostgreSQL connection.
+- Read-only OMS PostgreSQL connection, unless `STOCKSHIELD_OMS_SOURCE=internal`.
 - Shopify Admin API credentials per tenant.
 - `STOCKSHIELD_JWT_SECRET` for dashboard JWT sessions.
 - Optional `SLACK_WEBHOOK_URL` for ops alerts.
@@ -110,4 +110,7 @@ docker compose -f deploy/docker-compose.yml exec api npm run seed:demo
 - Migrations have run successfully.
 - API readiness is green at `/health/ready`.
 - `npm run smoke` passes against the target API.
+- Create one product, location, stock adjustment, and order reservation; confirm
+  `/v1/admin/inventory-truth` shows physical, reserved, sellable, sync status,
+  and root cause fields.
 - Queue lag in `/v1/admin/metrics` is within SLA.

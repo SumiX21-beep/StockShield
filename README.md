@@ -2,6 +2,82 @@
 
 StockShield is a NestJS service to detect and auto-fix inventory drift between OMS and sales channels.
 
+## Hybrid Distributed Order & Inventory System
+
+This repo now includes the complete backend track from the master build plan:
+
+- Inventory core: `products` and `inventory` tables, with `sellable = physical_quantity - reserved_quantity`
+- Order engine: `orders` table with `CREATED`, `RESERVED`, `CONFIRMED`, and `FAILED`
+- Redis locking: reservation lock key is `lock:{tenant}:{sku}:{location}`
+- Queue + worker: BullMQ queues `order.process`, `order.retry`, and `dlq`
+- External sync: mock Shopify-style APIs and inventory webhook
+- Drift system: scheduled compare, drift events, and auto-fix worker
+- Monitoring/load: `GET /metrics` and `npm run load:hybrid`
+
+Core public APIs:
+
+```text
+POST /products
+GET  /products
+POST /inventory/adjust
+GET  /inventory?sku=SKU
+POST /orders
+GET  /orders
+POST /orders/:id/retry
+POST /external/orders
+GET  /external/inventory
+POST /webhooks/inventory-update
+POST /drift/run
+GET  /drift
+POST /drift/:id/fix
+GET  /metrics
+```
+
+Run the three processes locally:
+
+```powershell
+npm run prisma:deploy
+npm run start:api
+npm run start:worker
+npm run start:scheduler
+```
+
+Minimal demo:
+
+```powershell
+Invoke-RestMethod http://localhost:3000/products -Method Post -ContentType "application/json" -Body '{"sku":"TSHIRT-1","name":"T Shirt","price":499}'
+Invoke-RestMethod http://localhost:3000/inventory/adjust -Method Post -ContentType "application/json" -Body '{"sku":"TSHIRT-1","locationId":"main","physicalDelta":10}'
+Invoke-RestMethod http://localhost:3000/orders -Method Post -ContentType "application/json" -Body '{"sku":"TSHIRT-1","locationId":"main","quantity":1}'
+Invoke-RestMethod "http://localhost:3000/inventory?sku=TSHIRT-1"
+Invoke-RestMethod "http://localhost:3000/metrics"
+```
+
+Load test:
+
+```powershell
+npm run smoke:hybrid
+npm run load:hybrid
+```
+
+`smoke:hybrid` expects the API and worker to be running. It proves the complete path:
+product -> inventory -> order reservation -> worker confirmation -> external sync -> drift detect -> drift fix -> metrics invariant.
+
+## Start Here
+
+If you only want to run and understand the project, open `START-HERE.md` first.
+
+Quick local start:
+
+```powershell
+npm run local:start
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```
+
 ## Day 1 Setup (Completed)
 
 - NestJS backend initialized with TypeScript
@@ -395,3 +471,71 @@ Default demo login after `npm run seed:demo`:
 demo@stockshield.local
 StockShield@123
 ```
+
+## Inventory Reliability Core
+
+StockShield now has an internal OMS-style inventory core that answers:
+
+```text
+Can this SKU be safely promised to a customer right now?
+```
+
+It tracks immutable inventory movements, reservations, order lifecycle changes,
+returns, sellable stock, Shopify sync jobs, and drift root cause.
+
+Core formula:
+
+```text
+sellable = max(0, physicalQuantity - reservedQuantity - safetyBuffer)
+```
+
+Inventory APIs:
+
+```bash
+POST /v1/admin/products
+GET  /v1/admin/products
+POST /v1/admin/locations
+GET  /v1/admin/locations
+GET  /v1/admin/inventory
+GET  /v1/admin/inventory-truth
+GET  /v1/admin/inventory/ledger
+POST /v1/admin/inventory/adjustments
+POST /v1/admin/orders
+GET  /v1/admin/orders
+POST /v1/admin/orders/<order_id>/cancel
+POST /v1/admin/orders/<order_id>/fulfill
+POST /v1/admin/returns
+GET  /v1/admin/sync-jobs
+POST /v1/admin/sync-jobs/<sync_job_id>/retry
+```
+
+Example flow:
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/products \
+  -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -d "{\"tenantId\":\"store_1\",\"title\":\"Black T-Shirt\",\"sku\":\"TSHIRT-BLK-M\",\"safetyBuffer\":2,\"unitPriceCents\":2499}"
+
+curl -X POST http://localhost:3000/v1/admin/locations \
+  -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -d "{\"tenantId\":\"store_1\",\"locationId\":\"loc_mumbai\",\"name\":\"Mumbai Warehouse\"}"
+
+curl -X POST http://localhost:3000/v1/admin/inventory/adjustments \
+  -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -d "{\"tenantId\":\"store_1\",\"sku\":\"TSHIRT-BLK-M\",\"locationId\":\"loc_mumbai\",\"physicalDelta\":100,\"safetyBuffer\":2,\"reason\":\"initial stock\"}"
+
+curl -X POST http://localhost:3000/v1/admin/orders \
+  -H "Content-Type: application/json" \
+  -H "$STOCKSHIELD_ADMIN_AUTH" \
+  -d "{\"tenantId\":\"store_1\",\"externalOrderId\":\"shopify-1001\",\"lines\":[{\"sku\":\"TSHIRT-BLK-M\",\"locationId\":\"loc_mumbai\",\"quantity\":5}]}"
+
+curl "http://localhost:3000/v1/admin/inventory-truth?tenantId=store_1" \
+  -H "$STOCKSHIELD_ADMIN_AUTH"
+```
+
+Set `STOCKSHIELD_OMS_SOURCE=internal` to make reconciliation scans compare
+Shopify against StockShield's internal sellable quantity. Leave it unset for the
+legacy external OMS reader.

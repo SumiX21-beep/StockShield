@@ -47,6 +47,7 @@ services:
       DRIFT_RISK_HIGH_THRESHOLD: "3"
       SHOPIFY_API_VERSION: "2025-10"
       SHOPIFY_WEBHOOK_SECRET: compose-local-webhook-secret
+      STOCKSHIELD_OMS_SOURCE: internal
       OMS_DATABASE_URL: postgresql://readonly:readonly@postgres:5432/stockshield?schema=public
       OMS_INVENTORY_TABLE: oms.inventory_snapshot
       OMS_TENANT_COLUMN: tenant_id
@@ -62,6 +63,7 @@ services:
       DRIFT_SCAN_CONCURRENCY: "2"
       DRIFT_FIX_CONCURRENCY: "8"
       DRIFT_RECHECK_CONCURRENCY: "5"
+      INVENTORY_SYNC_CONCURRENCY: "5"
       DRIFT_FIX_LOCK_TTL_MS: "60000"
     depends_on:
       postgres:

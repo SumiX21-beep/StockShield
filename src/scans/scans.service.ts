@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { bullMqJobId } from "../queues/bullmq-job-id";
 import { QUEUE_JOB_NAMES, QUEUE_NAMES } from "../queues/queue.constants";
 import { QueueService } from "../queues/queue.service";
 import { TriggerScanDto } from "./dto/trigger-scan.dto";
@@ -23,14 +24,14 @@ export class ScansService {
       windowStart,
       windowEnd,
     };
-    const jobId = [
+    const jobId = bullMqJobId(
       "manual-scan",
       input.tenantId,
       input.sku ?? "all-skus",
       input.locationId ?? "all-locations",
       windowStart,
       windowEnd,
-    ].join(":");
+    );
 
     const job = await queue.add(
       QUEUE_JOB_NAMES.SCAN_TENANT,

@@ -13,6 +13,29 @@ export class QueueService implements OnModuleDestroy {
   };
 
   private readonly queueDefaults: Record<QueueName, JobsOptions> = {
+    [QUEUE_NAMES.ORDER_PROCESS]: {
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 1_000,
+      },
+      removeOnComplete: 500,
+      removeOnFail: 1_000,
+    },
+    [QUEUE_NAMES.ORDER_RETRY]: {
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 1_000,
+      },
+      removeOnComplete: 500,
+      removeOnFail: 1_000,
+    },
+    [QUEUE_NAMES.ORDER_DLQ]: {
+      attempts: 1,
+      removeOnComplete: 1_000,
+      removeOnFail: 1_000,
+    },
     [QUEUE_NAMES.DRIFT_SCAN]: {
       attempts: 8,
       backoff: {
@@ -43,6 +66,24 @@ export class QueueService implements OnModuleDestroy {
     [QUEUE_NAMES.DRIFT_DLQ]: {
       attempts: 1,
       removeOnComplete: 1_000,
+      removeOnFail: 1_000,
+    },
+    [QUEUE_NAMES.HYBRID_DRIFT_FIX]: {
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 5_000,
+      },
+      removeOnComplete: 200,
+      removeOnFail: 1_000,
+    },
+    [QUEUE_NAMES.INVENTORY_SYNC]: {
+      attempts: 8,
+      backoff: {
+        type: "exponential",
+        delay: 30_000,
+      },
+      removeOnComplete: 200,
       removeOnFail: 1_000,
     },
   };
